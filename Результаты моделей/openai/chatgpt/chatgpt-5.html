@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Voxel Sandbox</title>
+<style>
+  html, body { margin:0; height:100%; overflow:hidden; background:#000; }
+  canvas { display:block; }
+  #ui {
+    position:fixed; bottom:10px; left:50%; transform:translateX(-50%);
+    display:flex; gap:6px; background:rgba(0,0,0,0.4); padding:6px 10px;
+    border-radius:10px; font-family:sans-serif; color:white; user-select:none;
+  }
+  .slot {
+    width:40px; height:40px; border:2px solid #888;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    background:rgba(255,255,255,0.05);
+  }
+  .slot.active { border-color:#fff; }
+  .count { font-size:12px; }
+</style>
+</head>
+<body>
+<div id="ui"></div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/controls/PointerLockControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/noisejs@2.1.0/index.min.js"></script>
+<script>
+const noise = new Noise(Math.random());
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0.6,0.8,1.0);
+const camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const controls = new THREE.PointerLockControls(camera, document.body);
+scene.add(controls.getObject());
+let velocity = new THREE.Vector3(), direction = new THREE.Vector3(), onGround=false;
+
+const light = new THREE.HemisphereLight(0xffffff,0x444444,1.1);
+scene.add(light);
+const sun = new THREE.DirectionalLight(0xffffff,0.5);
+sun.position.set(1,1,0.5);
+scene.add(sun);
+
+// WORLD GENERATION
+const CHUNK_SIZE = 16, WORLD_HEIGHT = 32, BLOCK_SIZE = 1;
+const chunks = new Map(), drops = [];
+const blockGeo = new THREE.BoxGeometry(BLOCK_SIZE,BLOCK_SIZE,BLOCK_SIZE);
+const materials = {
+  dirt: new THREE.MeshLambertMaterial({color:0x805020}),
+  grass: new THREE.MeshLambertMaterial({color:0x00aa00}),
+  stone: new THREE.MeshLambertMaterial({color:0x888888})
+};
+const blockTypes = ["grass","dirt","stone"];
+
+function key(x,z){ return `${x},${z}`; }
+
+function generateChunk(cx, cz){
+  const group = new THREE.Group();
+  for(let x=0;x<CHUNK_SIZE;x++){
+    for(let z=0;z<CHUNK_SIZE;z++){
+      const wx = cx*CHUNK_SIZE + x;
+      const wz = cz*CHUNK_SIZE + z;
+      const h = Math.floor(noise.perlin2(wx*0.05,wz*0.05)*8+8);
+      for(let y=0;y<h;y++){
+        const type = y<h-1 ? (y<h-3?"stone":"dirt") : "grass";
+        const cube = new THREE.Mesh(blockGeo, materials[type]);
+        cube.position.set(wx*BLOCK_SIZE, y*BLOCK_SIZE, wz*BLOCK_SIZE);
+        cube.userData = {type};
+        group.add(cube);
+      }
+    }
+  }
+  scene.add(group);
+  chunks.set(key(cx,cz), group);
+}
+
+function ensureChunks(){
+  const cx = Math.floor(controls.getObject().position.x/(CHUNK_SIZE*BLOCK_SIZE));
+  const cz = Math.floor(controls.getObject().position.z/(CHUNK_SIZE*BLOCK_SIZE));
+  for(let dx=-2;dx<=2;dx++)
+    for(let dz=-2;dz<=2;dz++){
+      const k=key(cx+dx,cz+dz);
+      if(!chunks.has(k)) generateChunk(cx+dx,cz+dz);
+    }
+}
+
+// INVENTORY
+const inventory = {};
+blockTypes.forEach(t=>inventory[t]=0);
+let activeIndex=0;
+const ui=document.getElementById("ui");
+function renderInventory(){
+  ui.innerHTML="";
+  blockTypes.forEach((t,i)=>{
+    const s=document.createElement("div"); s.className="slot"+(i===activeIndex?" active":"");
+    s.innerHTML=`<div>${t}</div><div class='count'>${inventory[t]}</div>`;
+    ui.appendChild(s);
+  });
+}
+renderInventory();
+
+// INPUT
+const keys={};
+document.addEventListener("keydown",e=>{
+  keys[e.code]=true;
+  if(e.code==="Digit1")activeIndex=0;
+  if(e.code==="Digit2")activeIndex=1;
+  if(e.code==="Digit3")activeIndex=2;
+  renderInventory();
+});
+document.addEventListener("keyup",e=>keys[e.code]=false);
+document.body.addEventListener("click",()=>controls.lock());
+
+// BLOCK INTERACTION
+const raycaster = new THREE.Raycaster();
+function breakBlock(){
+  raycaster.setFromCamera({x:0,y:0},camera);
+  const intersects = raycaster.intersectObjects([...scene.children].flatMap(c=>c.children||[]),false);
+  if(intersects.length>0){
+    const obj = intersects[0].object;
+    if(obj.userData.type){
+      const drop = new THREE.Mesh(blockGeo, materials[obj.userData.type]);
+      drop.scale.set(0.4,0.4,0.4);
+      drop.position.copy(obj.position).add(new THREE.Vector3(0,0.6,0));
+      drop.userData={type:obj.userData.type,vy:0.05};
+      scene.add(drop);
+      drops.push(drop);
+      obj.parent.remove(obj);
+    }
+  }
+}
+function placeBlock(){
+  raycaster.setFromCamera({x:0,y:0},camera);
+  const intersects = raycaster.intersectObjects([...scene.children].flatMap(c=>c.children||[]),false);
+  if(intersects.length>0){
+    const point = intersects[0].point;
+    const normal = intersects[0].face.normal;
+    const pos = new THREE.Vector3().copy(point).addScaledVector(normal,0.5);
+    pos.divideScalar(BLOCK_SIZE).floor().multiplyScalar(BLOCK_SIZE).addScalar(BLOCK_SIZE/2);
+    const type = blockTypes[activeIndex];
+    if(inventory[type]>0){
+      const cube = new THREE.Mesh(blockGeo, materials[type]);
+      cube.position.copy(pos);
+      cube.userData={type};
+      scene.add(cube);
+      inventory[type]--;
+      renderInventory();
+    }
+  }
+}
+document.addEventListener("mousedown",e=>{
+  if(!controls.isLocked)return;
+  if(e.button===0)breakBlock();
+  if(e.button===2)placeBlock();
+});
+
+// PHYSICS + PICKUP
+function updateDrops(){
+  for(let i=drops.length-1;i>=0;i--){
+    const d=drops[i];
+    d.rotation.x+=0.05; d.rotation.y+=0.07;
+    d.position.y-=d.userData.vy;
+    if(d.position.y<0){ d.position.y=0; d.userData.vy=0; }
+    const dist = controls.getObject().position.distanceTo(d.position);
+    if(dist<1){
+      inventory[d.userData.type]++;
+      scene.remove(d);
+      drops.splice(i,1);
+      renderInventory();
+    }
+  }
+}
+
+// MOVEMENT
+let prevTime=performance.now();
+function animate(){
+  requestAnimationFrame(animate);
+  const time = performance.now();
+  const delta = (time-prevTime)/1000;
+  ensureChunks();
+  updateDrops();
+
+  direction.z = Number(keys["KeyW"]) - Number(keys["KeyS"]);
+  direction.x = Number(keys["KeyD"]) - Number(keys["KeyA"]);
+  direction.normalize();
+  if(keys["Space"] && onGround){ velocity.y = 5; onGround=false; }
+
+  velocity.x -= velocity.x*10.0*delta;
+  velocity.z -= velocity.z*10.0*delta;
+  velocity.y -= 9.8*delta;
+
+  if(direction.z) velocity.z -= direction.z*40.0*delta;
+  if(direction.x) velocity.x -= direction.x*40.0*delta;
+
+  controls.moveRight(-velocity.x*delta);
+  controls.moveForward(-velocity.z*delta);
+  controls.getObject().position.y += velocity.y*delta;
+
+  if(controls.getObject().position.y<2){
+    velocity.y=0;
+    controls.getObject().position.y=2;
+    onGround=true;
+  }
+
+  renderer.render(scene,camera);
+  prevTime=time;
+}
+animate();
+
+window.addEventListener("resize",()=>{
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+</script>
+</body>
+</html>

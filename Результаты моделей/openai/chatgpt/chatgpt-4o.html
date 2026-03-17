@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Voxel Sandbox</title>
+  <style>
+    html, body { margin: 0; overflow: hidden; height: 100%; background: #87ceeb; }
+    canvas { display: block; }
+    #inventory {
+      position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 5px; background: rgba(0,0,0,0.5); padding: 5px; border-radius: 5px;
+    }
+    .slot {
+      width: 40px; height: 40px; border: 2px solid white; background: #ccc; color: black;
+      font-family: sans-serif; display: flex; justify-content: center; align-items: center;
+    }
+    .active { border-color: yellow; }
+  </style>
+</head>
+<body>
+  <div id="inventory"></div>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.154.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/simplex-noise@4.0.1/simplex-noise.min.js"></script>
+  <script>
+    // === Constants ===
+    const CHUNK_SIZE = 16;
+    const BLOCK_SIZE = 1;
+    const RENDER_DISTANCE = 3;
+    const WORLD_HEIGHT = 32;
+
+    const BLOCK_TYPES = {
+      1: { name: "Grass", color: 0x00ff00 },
+      2: { name: "Dirt", color: 0x8b4513 },
+      3: { name: "Stone", color: 0x888888 }
+    };
+
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const scene = new THREE.Scene();
+    const renderer = new THREE.WebGLRenderer();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // === Inventory ===
+    let inventory = { 1: 0, 2: 0, 3: 0 };
+    let selectedSlot = 1;
+    const inventoryUI = document.getElementById("inventory");
+    function updateInventoryUI() {
+      inventoryUI.innerHTML = "";
+      for (let i = 1; i <= 3; i++) {
+        const div = document.createElement("div");
+        div.className = "slot" + (selectedSlot === i ? " active" : "");
+        div.textContent = inventory[i];
+        inventoryUI.appendChild(div);
+      }
+    }
+    updateInventoryUI();
+
+    // === Controls ===
+    let keys = {}, velocity = new THREE.Vector3();
+    let canJump = false;
+
+    const controls = {
+      pitch: new THREE.Object3D(),
+      yaw: new THREE.Object3D(),
+      enabled: false
+    };
+    controls.yaw.add(controls.pitch);
+    controls.pitch.add(camera);
+    scene.add(controls.yaw);
+
+    document.body.addEventListener("click", () => {
+      renderer.domElement.requestPointerLock();
+    });
+
+    document.addEventListener("pointerlockchange", () => {
+      controls.enabled = document.pointerLockElement === renderer.domElement;
+    });
+
+    document.addEventListener("mousemove", (e) => {
+      if (controls.enabled) {
+        controls.yaw.rotation.y -= e.movementX * 0.002;
+        controls.pitch.rotation.x -= e.movementY * 0.002;
+        controls.pitch.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, controls.pitch.rotation.x));
+      }
+    });
+
+    document.addEventListener("keydown", e => {
+      keys[e.code] = true;
+      if (e.code === "Digit1") selectedSlot = 1;
+      if (e.code === "Digit2") selectedSlot = 2;
+      if (e.code === "Digit3") selectedSlot = 3;
+      updateInventoryUI();
+    });
+
+    document.addEventListener("keyup", e => keys[e.code] = false);
+
+    // === World ===
+    const world = new Map();
+    const blocks = new THREE.Group();
+    scene.add(blocks);
+    const simplex = new SimplexNoise();
+
+    function getChunkKey(x, z) {
+      return `${x},${z}`;
+    }
+
+    function generateChunk(cx, cz) {
+      const key = getChunkKey(cx, cz);
+      if (world.has(key)) return;
+
+      const chunk = new THREE.Group();
+      for (let x = 0; x < CHUNK_SIZE; x++) {
+        for (let z = 0; z < CHUNK_SIZE; z++) {
+          const wx = cx * CHUNK_SIZE + x;
+          const wz = cz * CHUNK_SIZE + z;
+          const height = Math.floor((simplex.noise2D(wx / 30, wz / 30) + 1) * 6 + 4);
+
+          for (let y = 0; y < height; y++) {
+            let type = y < height - 4 ? 3 : (y < height - 1 ? 2 : 1);
+            const geometry = new THREE.BoxGeometry(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+            const material = new THREE.MeshStandardMaterial({ color: BLOCK_TYPES[type].color });
+            const cube = new THREE.Mesh(geometry, material);
+            cube.position.set(wx, y, wz);
+            cube.userData.blockType = type;
+            chunk.add(cube);
+          }
+        }
+      }
+      blocks.add(chunk);
+      world.set(key, chunk);
+    }
+
+    function loadChunks(px, pz) {
+      const cx = Math.floor(px / CHUNK_SIZE);
+      const cz = Math.floor(pz / CHUNK_SIZE);
+      for (let dx = -RENDER_DISTANCE; dx <= RENDER_DISTANCE; dx++) {
+        for (let dz = -RENDER_DISTANCE; dz <= RENDER_DISTANCE; dz++) {
+          generateChunk(cx + dx, cz + dz);
+        }
+      }
+    }
+
+    // === Item Drops ===
+    const drops = [];
+    function spawnDrop(position, type) {
+      const geometry = new THREE.BoxGeometry(0.3, 0.3, 0.3);
+      const material = new THREE.MeshStandardMaterial({ color: BLOCK_TYPES[type].color });
+      const drop = new THREE.Mesh(geometry, material);
+      drop.position.copy(position);
+      drop.userData = { type, velocity: new THREE.Vector3(0, 0.05, 0) };
+      scene.add(drop);
+      drops.push(drop);
+    }
+
+    // === Raycasting for block interaction ===
+    const raycaster = new THREE.Raycaster();
+    function getBlockIntersection() {
+      raycaster.setFromCamera({ x: 0, y: 0 }, camera);
+      return raycaster.intersectObjects(blocks.children.flatMap(c => c.children), false)[0];
+    }
+
+    document.addEventListener("mousedown", e => {
+      if (!controls.enabled) return;
+      const hit = getBlockIntersection();
+      if (hit) {
+        if (e.button === 0) { // Break
+          const mesh = hit.object;
+          mesh.parent.remove(mesh);
+          spawnDrop(mesh.position, mesh.userData.blockType);
+        } else if (e.button === 2) { // Place
+          if (inventory[selectedSlot] > 0) {
+            const pos = hit.point.clone().add(hit.face.normal).addScalar(0.5).floor();
+            const geometry = new THREE.BoxGeometry(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+            const material = new THREE.MeshStandardMaterial({ color: BLOCK_TYPES[selectedSlot].color });
+            const cube = new THREE.Mesh(geometry, material);
+            cube.position.copy(pos);
+            cube.userData.blockType = selectedSlot;
+            hit.object.parent.add(cube);
+            inventory[selectedSlot]--;
+            updateInventoryUI();
+          }
+        }
+      }
+    });
+
+    // === Player position and physics ===
+    const player = new THREE.Object3D();
+    player.position.set(0, 20, 0);
+    controls.yaw.position.copy(player.position);
+
+    // === Lighting ===
+    const light = new THREE.DirectionalLight(0xffffff, 1);
+    light.position.set(10, 20, 10);
+    scene.add(light);
+    scene.add(new THREE.AmbientLight(0x888888));
+
+    // === Game loop ===
+    function animate() {
+      requestAnimationFrame(animate);
+      const speed = 0.1;
+      const dir = new THREE.Vector3();
+      if (keys["KeyW"]) dir.z -= 1;
+      if (keys["KeyS"]) dir.z += 1;
+      if (keys["KeyA"]) dir.x -= 1;
+      if (keys["KeyD"]) dir.x += 1;
+      dir.applyEuler(controls.yaw.rotation).normalize().multiplyScalar(speed);
+      player.position.add(dir);
+
+      if (keys["Space"] && canJump) {
+        velocity.y = 0.15;
+        canJump = false;
+      }
+
+      velocity.y -= 0.01;
+      player.position.y += velocity.y;
+
+      // Ground collision
+      if (player.position.y < 2) {
+        player.position.y = 2;
+        velocity.y = 0;
+        canJump = true;
+      }
+
+      controls.yaw.position.copy(player.position);
+      loadChunks(player.position.x, player.position.z);
+
+      // Item drop logic
+      for (let i = drops.length - 1; i >= 0; i--) {
+        const drop = drops[i];
+        drop.position.add(drop.userData.velocity);
+        drop.rotation.y += 0.1;
+        drop.userData.velocity.y -= 0.003;
+
+        // Pickup
+        if (drop.position.distanceTo(player.position) < 1) {
+          inventory[drop.userData.type]++;
+          updateInventoryUI();
+          scene.remove(drop);
+          drops.splice(i, 1);
+        }
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    animate();
+  </script>
+</body>
+</html>

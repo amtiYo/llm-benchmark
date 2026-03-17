@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Voxel Sandbox</title>
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#87b5e5;font-family:sans-serif}
+#crosshair{position:fixed;left:50%;top:50%;width:14px;height:14px;margin:-7px}
+#crosshair:before,#crosshair:after{content:"";position:absolute;background:white}
+#crosshair:before{width:14px;height:2px;top:6px}
+#crosshair:after{height:14px;width:2px;left:6px}
+#inv{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);display:flex;gap:8px}
+.slot{width:44px;height:44px;background:#222c;border:2px solid #555;border-radius:6px;
+display:flex;align-items:center;justify-content:center;color:white;font-weight:bold}
+.slot.active{border-color:#4fc3f7}
+#hint{position:fixed;top:10px;left:50%;transform:translateX(-50%);
+background:#0008;color:white;padding:8px 14px;border-radius:6px}
+</style>
+</head>
+<body>
+
+<div id="hint">WASD – ходьба · SPACE – прыжок · LMB – ломать · RMB – ставить · 1–4 слоты</div>
+<div id="crosshair"></div>
+<div id="inv"></div>
+
+<script type="module">
+import * as THREE from "https://unpkg.com/three@0.152.2/build/three.module.js";
+import SimplexNoise from "https://unpkg.com/simplex-noise@4.0.1/dist/esm/simplex-noise.js";
+
+/* ================= CONFIG ================= */
+const CHUNK = 16;
+const HEIGHT = 32;
+const RENDER = 2;
+const GRAVITY = -0.04;
+const SPEED = 0.12;
+
+/* ================= SETUP ================= */
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87b5e5);
+
+const camera = new THREE.PerspectiveCamera(75,innerWidth/innerHeight,0.1,1000);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth,innerHeight);
+document.body.appendChild(renderer.domElement);
+
+window.addEventListener("resize",()=>{
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+
+scene.add(new THREE.HemisphereLight(0xffffff,0x444444,1));
+const sun = new THREE.DirectionalLight(0xffffff,0.6);
+sun.position.set(10,20,5);
+scene.add(sun);
+
+/* ================= BLOCKS ================= */
+const BLOCKS = {
+  1:{color:0x55aa55}, // grass
+  2:{color:0x8b5a2b}, // dirt
+  3:{color:0x888888}  // stone
+};
+
+/* ================= WORLD ================= */
+const noise = new SimplexNoise();
+const chunks = new Map();
+const meshes = new Map();
+
+function key(cx,cz){return cx+","+cz}
+
+function getHeight(x,z){
+  return Math.floor(10 + noise.noise2D(x/40,z/40)*6);
+}
+
+function generateChunk(cx,cz){
+  const data=[];
+  for(let x=0;x<CHUNK;x++)
+  for(let z=0;z<CHUNK;z++){
+    const wx=cx*CHUNK+x;
+    const wz=cz*CHUNK+z;
+    const h=getHeight(wx,wz);
+    for(let y=0;y<HEIGHT;y++){
+      let id=0;
+      if(y===h) id=1;
+      else if(y<h) id=y>h-3?2:3;
+      data.push(id);
+    }
+  }
+  chunks.set(key(cx,cz),data);
+}
+
+function blockAt(wx,wy,wz){
+  const cx=Math.floor(wx/CHUNK);
+  const cz=Math.floor(wz/CHUNK);
+  const lx=((wx%CHUNK)+CHUNK)%CHUNK;
+  const lz=((wz%CHUNK)+CHUNK)%CHUNK;
+  const c=chunks.get(key(cx,cz));
+  if(!c||wy<0||wy>=HEIGHT) return 0;
+  return c[wy*CHUNK*CHUNK+lz*CHUNK+lx];
+}
+
+function setBlock(wx,wy,wz,id){
+  const cx=Math.floor(wx/CHUNK);
+  const cz=Math.floor(wz/CHUNK);
+  const lx=((wx%CHUNK)+CHUNK)%CHUNK;
+  const lz=((wz%CHUNK)+CHUNK)%CHUNK;
+  const k=key(cx,cz);
+  if(!chunks.has(k)) generateChunk(cx,cz);
+  chunks.get(k)[wy*CHUNK*CHUNK+lz*CHUNK+lx]=id;
+  if(meshes.has(k)){scene.remove(meshes.get(k));meshes.delete(k);}
+}
+
+/* ================= CHUNK MESH ================= */
+function buildChunk(cx,cz){
+  const geom=new THREE.BufferGeometry();
+  const pos=[],col=[];
+  const data=chunks.get(key(cx,cz));
+  if(!data) return;
+
+  for(let x=0;x<CHUNK;x++)
+  for(let y=0;y<HEIGHT;y++)
+  for(let z=0;z<CHUNK;z++){
+    const id=data[y*CHUNK*CHUNK+z*CHUNK+x];
+    if(!id) continue;
+    const wx=cx*CHUNK+x, wz=cz*CHUNK+z;
+    if(!blockAt(wx,y+1,wz)){
+      const c=BLOCKS[id].color;
+      const r=(c>>16&255)/255,g=(c>>8&255)/255,b=(c&255)/255;
+      pos.push(wx,y+1,wz, wx+1,y+1,wz, wx+1,y+1,wz+1, wx,y+1,wz+1);
+      col.push(r,g,b,r,g,b,r,g,b,r,g,b);
+    }
+  }
+
+  if(!pos.length) return;
+  geom.setAttribute("position",new THREE.Float32BufferAttribute(pos,3));
+  geom.setAttribute("color",new THREE.Float32BufferAttribute(col,3));
+  geom.setIndex([...Array(pos.length/3/4).keys()].flatMap(i=>[i*4,i*4+1,i*4+2,i*4,i*4+2,i*4+3]));
+  const mesh=new THREE.Mesh(geom,new THREE.MeshLambertMaterial({vertexColors:true}));
+  meshes.set(key(cx,cz),mesh);
+  scene.add(mesh);
+}
+
+/* ================= PLAYER ================= */
+const player={pos:new THREE.Vector3(0,20,0),vel:new THREE.Vector3(),yaw:0,pitch:0,ground:false};
+
+const keys={};
+addEventListener("keydown",e=>keys[e.code]=true);
+addEventListener("keyup",e=>keys[e.code]=false);
+
+renderer.domElement.onclick=()=>renderer.domElement.requestPointerLock();
+addEventListener("mousemove",e=>{
+  if(document.pointerLockElement){
+    player.yaw-=e.movementX*0.002;
+    player.pitch-=e.movementY*0.002;
+    player.pitch=Math.max(-1.5,Math.min(1.5,player.pitch));
+  }
+});
+
+/* ================= LOOP ================= */
+function loop(){
+  let dx=0,dz=0;
+  if(keys.KeyW)dz-=1;
+  if(keys.KeyS)dz+=1;
+  if(keys.KeyA)dx-=1;
+  if(keys.KeyD)dx+=1;
+
+  const sin=Math.sin(player.yaw),cos=Math.cos(player.yaw);
+  player.vel.x+=(dx*cos-dz*sin)*SPEED;
+  player.vel.z+=(dz*cos+dx*sin)*SPEED;
+
+  player.vel.y+=GRAVITY;
+  player.pos.add(player.vel);
+  if(player.pos.y<getHeight(player.pos.x,player.pos.z)+1){
+    player.pos.y=getHeight(player.pos.x,player.pos.z)+1;
+    player.vel.y=0;
+  }
+
+  player.vel.multiplyScalar(0.85);
+
+  camera.position.set(player.pos.x,player.pos.y+1.6,player.pos.z);
+  camera.lookAt(
+    camera.position.x+Math.sin(player.yaw),
+    camera.position.y+Math.sin(player.pitch),
+    camera.position.z+Math.cos(player.yaw)
+  );
+
+  const ccx=Math.floor(player.pos.x/CHUNK);
+  const ccz=Math.floor(player.pos.z/CHUNK);
+  for(let x=-RENDER;x<=RENDER;x++)
+  for(let z=-RENDER;z<=RENDER;z++){
+    const k=key(ccx+x,ccz+z);
+    if(!chunks.has(k)) generateChunk(ccx+x,ccz+z);
+    if(!meshes.has(k)) buildChunk(ccx+x,ccz+z);
+  }
+
+  renderer.render(scene,camera);
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>

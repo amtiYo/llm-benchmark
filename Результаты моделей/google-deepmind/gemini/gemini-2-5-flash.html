@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voxel Sandbox</title>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: monospace; }
+        canvas { display: block; }
+        #inventory-ui {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 5px;
+            border-radius: 5px;
+        }
+        .inventory-slot {
+            width: 60px;
+            height: 60px;
+            border: 2px solid #555;
+            margin: 2px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            font-size: 0.8em;
+            position: relative;
+        }
+        .inventory-slot.active {
+            border-color: yellow;
+        }
+        .slot-image {
+            width: 40px;
+            height: 40px;
+            background-size: cover;
+            background-position: center;
+        }
+        .slot-count {
+            position: absolute;
+            bottom: 2px;
+            right: 2px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 1px 3px;
+            border-radius: 3px;
+        }
+        #block-highlight {
+            position: absolute;
+            border: 2px solid white;
+            pointer-events: none;
+            display: none; /* Hidden by default */
+        }
+    </style>
+</head>
+<body>
+    <div id="inventory-ui"></div>
+    <div id="block-highlight"></div>
+
+    <!-- Three.js Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
+    <!-- Perlin Noise Library (for terrain generation) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/simplex-noise/2.4.0/simplex-noise.min.js"></script>
+
+    <script>
+        // --- Global Variables ---
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        const pointerLockElement = document.body;
+
+        // Player
+        const player = {
+            height: 1.8,
+            radius: 0.3,
+            position: new THREE.Vector3(0, 50, 0),
+            velocity: new THREE.Vector3(),
+            onGround: false,
+            speed: 5,
+            jumpStrength: 10,
+            rotation: new THREE.Vector2(), // x: horizontal, y: vertical
+        };
+
+        // World
+        const CHUNK_SIZE = 16;
+        const WORLD_HEIGHT = 128;
+        const BLOCK_SIZE = 1;
+        const chunks = new Map(); // Stores active chunks
+        const blockTypes = {
+            0: { name: 'air', color: 0x000000, transparent: true },
+            1: { name: 'grass', color: 0x00ff00, texture: 'grass_top.png' }, // Placeholder for texture
+            2: { name: 'dirt', color: 0x8B4513, texture: 'dirt.png' },     // Placeholder for texture
+            3: { name: 'stone', color: 0x808080, texture: 'stone.png' },   // Placeholder for texture
+            // Add more block types here
+        };
+        const blockMaterials = {}; // To store Three.js materials for each block type
+
+        // Inventory
+        const inventory = new Map(); // Stores { blockTypeID: count }
+        let activeInventorySlot = 0;
+        const INVENTORY_SLOTS = 9;
+
+        // Mouse controls
+        let isGamePaused = true;
+
+        // Raycasting for block interaction
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        let highlightedBlock = null;
+        let highlightedBlockMesh = null; // A simple cube to show what block is targeted
+
+        // Perlin Noise for terrain generation
+        const simplex = new SimplexNoise();
+
+        // --- Initialization ---
+        function init() {
+            // Renderer setup
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+            renderer.setClearColor(0x87CEEB); // Sky blue background
+
+            // Camera setup
+            camera.position.set(player.position.x, player.position.y + player.height / 2, player.position.z);
+            camera.lookAt(new THREE.Vector3(0, player.position.y + player.height / 2, -1)); // Look forward
+
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0x404040); // Soft white light
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(1, 1, 1).normalize();
+            scene.add(directionalLight);
+
+            // Create block materials (simple colors for now, textures would be loaded here)
+            for (const id in blockTypes) {
+                if (blockTypes[id].transparent) {
+                    blockMaterials[id] = new THREE.MeshBasicMaterial({ color: blockTypes[id].color, transparent: true, opacity: 0 });
+                } else {
+                    blockMaterials[id] = new THREE.MeshLambertMaterial({ color: blockTypes[id].color });
+                }
+            }
+            // Add a material for dropped items (e.g., a simple white material)
+            blockMaterials['drop'] = new THREE.MeshLambertMaterial({ color: 0xffffff });
+
+
+            setupPointerLock();
+            setupEventListeners();
+            createInventoryUI();
+            createBlockHighlight();
+
+            // Initial world generation around the player
+            updateChunks(player.position.x, player.position.z);
+
+            animate();
+        }
+
+        function createBlockHighlight() {
+            const geometry = new THREE.BoxGeometry(BLOCK_SIZE * 1.01, BLOCK_SIZE * 1.01, BLOCK_SIZE * 1.01);
+            const material = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.2, wireframe: true });
+            highlightedBlockMesh = new THREE.Mesh(geometry, material);
+            highlightedBlockMesh.name = "block-highlight-mesh"; // For easy identification
+            scene.add(highlightedBlockMesh);
+            highlightedBlockMesh.visible = false;
+        }
+
+        // --- Pointer Lock (for first-person camera) ---
+        function setupPointerLock() {
+            pointerLockElement.requestPointerLock = pointerLockElement.requestPointerLock ||
+                                                    pointerLockElement.mozRequestPointerLock ||
+                                                    pointerLockElement.webkitRequestPointerLock;
+
+            pointerLockElement.onclick = function() {
+                if (isGamePaused) {
+                    pointerLockElement.requestPointerLock();
+                }
+            };
+
+            document.addEventListener('pointerlockchange', pointerLockChange, false);
+            document.addEventListener('mozpointerlockchange', pointerLockChange, false);
+            document.addEventListener('webkitpointerlockchange', pointerLockChange, false);
+        }
+
+        function pointerLockChange() {
+            if (document.pointerLockElement === pointerLockElement ||
+                document.mozPointerLockElement === pointerLockElement ||
+                document.webkitPointerLockElement === pointerLockElement) {
+                isGamePaused = false;
+                document.addEventListener('mousemove', onMouseMove, false);
+                document.getElementById('inventory-ui').style.display = 'flex'; // Show UI
+                document.getElementById('block-highlight').style.display = 'block'; // Show highlight UI
+            } else {
+                isGamePaused = true;
+                document.removeEventListener('mousemove', onMouseMove, false);
+                document.getElementById('inventory-ui').style.display = 'none'; // Hide UI
+                document.getElementById('block-highlight').style.display = 'none'; // Hide highlight UI
+            }
+        }
+
+        // --- Event Listeners ---
+        const pressedKeys = new Set();
+
+        function setupEventListeners() {
+            window.addEventListener('resize', onWindowResize, false);
+            document.addEventListener('keydown', onKeyDown, false);
+            document.addEventListener('keyup', onKeyUp, false);
+            document.addEventListener('mousedown', onMouseDown, false);
+            document.addEventListener('wheel', onMouseScroll, false);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function onMouseMove(event) {
+            if (isGamePaused) return;
+
+            const movementX = event.movementX || event.mozMovementX || event.webkitMovementX || 0;
+            const movementY = event.movementY || event.mozMovementY || event.webkitMovementY || 0;
+
+            player.rotation.x -= movementX * 0.002;
+            player.rotation.y -= movementY * 0.002;
+
+            player.rotation.y = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, player.rotation.y)); // Limit vertical look
+
+            camera.rotation.order = 'YXZ'; // Yaw (Y), Pitch (X), Roll (Z)
+            camera.rotation.y = player.rotation.x;
+            camera.rotation.x = player.rotation.y;
+        }
+
+        function onKeyDown(event) {
+            pressedKeys.add(event.code);
+
+            // Inventory slot selection
+            if (!isGamePaused) {
+                const slotIndex = parseInt(event.key) - 1; // 1-9 keys for slots
+                if (slotIndex >= 0 && slotIndex < INVENTORY_SLOTS) {
+                    activeInventorySlot = slotIndex;
+                    updateInventoryUI();
+                }
+            }
+        }
+
+        function onKeyUp(event) {
+            pressedKeys.delete(event.code);
+        }
+
+        function onMouseDown(event) {
+            if (isGamePaused) return;
+
+            // Update mouse coordinates for raycaster
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            if (event.button === 0) { // Left mouse button (LMB) - Break block
+                breakBlock();
+            } else if (event.button === 2) { // Right mouse button (RMB) - Place block
+                placeBlock();
+            }
+        }
+
+        function onMouseScroll(event) {
+            if (isGamePaused) return;
+
+            if (event.deltaY < 0) { // Scroll up
+                activeInventorySlot = (activeInventorySlot - 1 + INVENTORY_SLOTS) % INVENTORY_SLOTS;
+            } else { // Scroll down
+                activeInventorySlot = (activeInventorySlot + 1) % INVENTORY_SLOTS;
+            }
+            updateInventoryUI();
+            event.preventDefault(); // Prevent page scrolling
+        }
+
+        // --- Inventory UI ---
+        function createInventoryUI() {
+            const inventoryUI = document.getElementById('inventory-ui');
+            inventoryUI.innerHTML = ''; // Clear existing
+            for (let i = 0; i < INVENTORY_SLOTS; i++) {
+                const slotDiv = document.createElement('div');
+                slotDiv.classList.add('inventory-slot');
+                slotDiv.dataset.slotIndex = i;
+
+                const slotImage = document.createElement('div');
+                slotImage.classList.add('slot-image');
+                slotDiv.appendChild(slotImage);
+
+                const slotCount = document.createElement('span');
+                slotCount.classList.add('slot-count');
+                slotDiv.appendChild(slotCount);
+
+                inventoryUI.appendChild(slotDiv);
+            }
+            updateInventoryUI(); // Initial update
+        }
+
+        function updateInventoryUI() {
+            const inventorySlots = document.querySelectorAll('.inventory-slot');
+            inventorySlots.forEach((slotDiv, index) => {
+                const blockTypeID = Array.from(inventory.keys())[index]; // Get block type for this slot
+                const count = inventory.get(blockTypeID) || 0;
+
+                slotDiv.classList.remove('active');
+                if (index === activeInventorySlot) {
+                    slotDiv.classList.add('active');
+                }
+
+                const slotImage = slotDiv.querySelector('.slot-image');
+                const slotCount = slotDiv.querySelector('.slot-count');
+
+                if (blockTypeID && blockTypes[blockTypeID]) {
+                    // For now, let's just color the slot based on the block color
+                    slotImage.style.backgroundColor = '#' + blockTypes[blockTypeID].color.toString(16).padStart(6, '0');
+                    slotCount.textContent = count > 0 ? count : '';
+                } else {
+                    slotImage.style.backgroundColor = 'transparent';
+                    slotCount.textContent = '';
+                }
+            });
+        }
+
+        function addItemToInventory(blockTypeID, amount = 1) {
+            if (!blockTypeID || !blockTypes[blockTypeID] || blockTypeID === 0) return; // Cannot add air or invalid blocks
+
+            const currentCount = inventory.get(blockTypeID) || 0;
+            inventory.set(blockTypeID, currentCount + amount);
+            updateInventoryUI();
+        }
+
+        function removeItemFromInventory(blockTypeID, amount = 1) {
+            if (!blockTypeID || !blockTypes[blockTypeID] || blockTypeID === 0) return false;
+
+            const currentCount = inventory.get(blockTypeID) || 0;
+            if (currentCount >= amount) {
+                inventory.set(blockTypeID, currentCount - amount);
+                if (inventory.get(blockTypeID) <= 0) {
+                    inventory.delete(blockTypeID);
+                    // If the active slot's item is fully removed, clear the slot
+                    const activeBlockTypeInSlot = Array.from(inventory.keys())[activeInventorySlot];
+                    if (activeBlockTypeInSlot === blockTypeID && inventory.get(blockTypeID) === undefined) {
+                         // Potentially re-assign activeInventorySlot or leave it empty
+                         // For now, it will just show empty
+                    }
+                }
+                updateInventoryUI();
+                return true;
+            }
+            return false;
+        }
+
+        init();
+    </script>
+</body>
+</html>

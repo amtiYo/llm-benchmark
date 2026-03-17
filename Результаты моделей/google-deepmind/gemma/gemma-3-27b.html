@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Voxel Sandbox</title>
+<style>
+body { margin: 0; overflow: hidden; }
+canvas { display: block; }
+#inventory {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  background-color: rgba(0, 0, 0, 0.7);
+  padding: 5px;
+  border-radius: 5px;
+  color: white;
+  font-family: sans-serif;
+}
+.inventory-slot {
+  display: inline-block;
+  margin-right: 5px;
+}
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<div id="inventory"></div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const inventoryDiv = document.getElementById('inventory');
+
+const CHUNK_SIZE = 16;
+const BLOCK_SIZE = 32;
+const WORLD_SIZE = 10; // Number of chunks in each direction from the center
+const PLAYER_HEIGHT = 32;
+
+let world = {};
+let player = {
+  x: 0,
+  y: 0,
+  z: 0,
+  rotation: 0,
+  velocityY: 0,
+  inventory: {}
+};
+
+let drops = [];
+
+// Inventory UI
+function updateInventoryUI() {
+  inventoryDiv.innerHTML = '';
+  for (const blockType in player.inventory) {
+    const count = player.inventory[blockType];
+    const slot = document.createElement('div');
+    slot.classList.add('inventory-slot');
+    slot.textContent = `${blockType}: ${count}`;
+    inventoryDiv.appendChild(slot);
+  }
+}
+
+// World Generation
+function generateChunk(chunkX, chunkZ) {
+  let chunk = [];
+  for (let x = 0; x < CHUNK_SIZE; x++) {
+    chunk[x] = [];
+    for (let z = 0; z < CHUNK_SIZE; z++) {
+      let worldX = chunkX * CHUNK_SIZE + x;
+      let worldZ = chunkZ * CHUNK_SIZE + z;
+      let height = Math.floor(Math.noise(worldX * 0.02, worldZ * 0.02) * 8) + 4;
+      chunk[x][z] = height;
+    }
+  }
+  return chunk;
+}
+
+function getWorldBlock(x, y, z) {
+  const chunkX = Math.floor(x / CHUNK_SIZE);
+  const chunkZ = Math.floor(z / CHUNK_SIZE);
+
+  if (!world[chunkX + "," + chunkZ]) {
+    return null;
+  }
+
+  const chunk = world[chunkX + "," + chunkZ];
+  const blockX = x % CHUNK_SIZE;
+  const blockZ = z % CHUNK_SIZE;
+
+  if (y >= chunk[blockX][blockZ]) {
+    return null;
+  }
+
+  return { type: 'dirt' };
+}
+
+function setWorldBlock(x, y, z, blockType) {
+  const chunkX = Math.floor(x / CHUNK_SIZE);
+  const chunkZ = Math.floor(z / CHUNK_SIZE);
+
+  if (!world[chunkX + "," + chunkZ]) {
+    world[chunkX + "," + chunkZ] = generateChunk(chunkX, chunkZ);
+  }
+
+  const chunk = world[chunkX + "," + chunkZ];
+  const blockX = x % CHUNK_SIZE;
+  const blockZ = z % CHUNK_SIZE;
+
+  chunk[blockX][blockZ] = y + 1;
+}
+
+// Drops
+function createDrop(x, y, z, blockType) {
+  drops.push({
+    x: x + 0.5,
+    y: y + 1,
+    z: z + 0.5,
+    blockType: blockType,
+    velocityY: 0,
+    rotation: Math.random() * 360
+  });
+}
+
+// Collision Detection
+function collide(x, y, z) {
+  const blockX = Math.floor(x / BLOCK_SIZE);
+  const blockY = Math.floor(y / BLOCK_SIZE);
+  const blockZ = Math.floor(z / BLOCK_SIZE);
+
+  const block = getWorldBlock(blockX, blockY, blockZ);
+  return block !== null;
+}
+
+// Player Movement
+function movePlayer(dx, dy, dz) {
+  let newX = player.x + dx;
+  let newY = player.y + dy;
+  let newZ = player.z + dz;
+
+  if (!collide(newX, player.y, player.z)) {
+    player.x = newX;
+  }
+  if (!collide(player.x, newY, player.z)) {
+    player.y = newY;
+  }
+  if (!collide(player.x, player.y, newZ)) {
+    player.z = newZ;
+  }
+}
+
+// Picking up drops
+function pickupDrops() {
+  for (let i = drops.length - 1; i >= 0; i--) {
+    const drop = drops[i];
+    const distance = Math.sqrt(
+      Math.pow(player.x - drop.x, 2) +
+      Math.pow(player.y - drop.y, 2) +
+      Math.pow(player.z - drop.z, 2)
+    );
+
+    if (distance < 2) {
+      if (player.inventory[drop.blockType]) {
+        player.inventory[drop.blockType]++;
+      } else {
+        player.inventory[drop.blockType] = 1;
+      }
+      drops.splice(i, 1);
+    }
+  }
+  updateInventoryUI();
+}
+
+// Rendering
+function render() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Camera
+  const cameraX = player.x;
+  const cameraY = player.y + PLAYER_HEIGHT / 2;
+  const cameraZ = player.z;
+
+  // Draw world
+  const renderDistance = 5;
+  const startX = Math.floor((player.x - renderDistance * BLOCK_SIZE) / CHUNK_SIZE) * CHUNK_SIZE;
+  const startZ = Math.floor((player.z - renderDistance * BLOCK_SIZE) / CHUNK_SIZE) * CHUNK_SIZE;
+
+  for (let chunkX = startX; chunkX < startX + renderDistance * CHUNK_SIZE; chunkX += CHUNK_SIZE) {
+    for (let chunkZ = startZ; chunkZ < startZ + renderDistance * CHUNK_SIZE; chunkZ += CHUNK_SIZE) {
+      if (!world[chunkX + "," + chunkZ]) {
+        world[chunkX + "," + chunkZ] = generateChunk(chunkX / CHUNK_SIZE, chunkZ / CHUNK_SIZE);
+      }
+
+      const chunk = world[chunkX + "," + chunkZ];
+      for (let x = 0; x < CHUNK_SIZE; x++) {
+        for (let z = 0; z < CHUNK_SIZE; z++) {
+          const worldX = chunkX + x;
+          const worldZ = chunkZ + z;
+          const height = chunk[x][z];
+
+          for (let y = 0; y < height; y++) {
+            const screenX = (worldX - cameraX) * (canvas.width / 2) / (BLOCK_SIZE * 5) + canvas.width / 2;
+            const screenY = (worldY - cameraY) * (canvas.height / 2) / (BLOCK_SIZE * 5) + canvas.height / 2;
+            const worldY = y;
+
+            if (screenX > -BLOCK_SIZE && screenX < canvas.width + BLOCK_SIZE && screenY > -BLOCK_SIZE && screenY < canvas.height + BLOCK_SIZE) {
+              ctx.fillStyle = 'brown';
+              ctx.fillRect(screenX, screenY, BLOCK_SIZE, BLOCK_SIZE);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Draw drops
+  for (const drop of drops) {
+    const screenX = (drop.x - cameraX) * (canvas.width / 2) / (BLOCK_SIZE * 5) + canvas.width / 2;
+    const screenY = (drop.y - cameraY) * (canvas.height / 2) / (BLOCK_SIZE * 5) + canvas.height / 2;
+
+    ctx.fillStyle = drop.blockType === 'dirt' ? 'brown' : 'gray';
+    ctx.beginPath();
+    ctx.arc(screenX + BLOCK_SIZE / 2, screenY + BLOCK_SIZE / 2, BLOCK_SIZE / 4, 0, 2 * Math.PI);
+    ctx.fill();
+  }
+
+  requestAnimationFrame(render);
+}
+
+// Game Loop
+function gameLoop() {
+  // Update physics
+  player.velocityY -= 0.05;
+  player.y -= player.velocityY;
+  if (player.y < 0) {
+    player.y = 0;
+    player.velocityY = 0;
+  }
+
+  // Update drops
+  for (const drop of drops) {
+    drop.velocityY -= 0.1;
+    drop.y -= drop.velocityY;
+    drop.rotation += 2;
+  }
+
+  pickupDrops();
+
+  render();
+}
+
+// Input Handling
+document.addEventListener('keydown', (event) => {
+  const speed = 0.5;
+  const jumpForce = 5;
+
+  switch (event.key) {
+    case 'w':
+      movePlayer(0, 0, -speed);
+      break;
+    case 's':
+      movePlayer(0, 0, speed);
+      break;
+    case 'a':
+      movePlayer(-speed, 0, 0);
+      break;
+    case 'd':
+      movePlayer(speed, 0, 0);
+      break;
+    case ' ':
+      if (player.y === 0) {
+        player.velocityY = jumpForce;
+      }
+      break;
+  }
+});
+
+document.addEventListener('mousemove', (event) => {
+  const sensitivity = 0.002;
+  player.rotation += (event.clientX - canvas.width / 2) * sensitivity;
+  event.clientX = canvas.width / 2;
+  event.clientY = canvas.height / 2;
+});
+
+document.addEventListener('mousedown', (event) => {
+  if (event.button === 0) { // Left mouse button
+    const rayX = Math.cos(player.rotation * Math.PI / 180);
+    const rayZ = Math.sin(player.rotation * Math.PI / 180);
+
+    const blockX = Math.floor(player.x / BLOCK_SIZE);
+    const blockY = Math.floor(player.y / BLOCK_SIZE);
+    const blockZ = Math.floor(player.z / BLOCK_SIZE);
+
+    const hitX = blockX + rayX;
+    const hitY = blockY;
+    const hitZ = blockZ + rayZ;
+
+    const block = getWorldBlock(hitX, hitY, hitZ);
+
+    if (block) {
+      createDrop(hitX, hitY, hitZ, block.type);
+      setWorldBlock(hitX, hitY, hitZ, null);
+    }
+  } else if (event.button === 2) { // Right mouse button
+    const rayX = Math.cos(player.rotation * Math.PI / 180);
+    const rayZ = Math.sin(player.rotation * Math.PI / 180);
+
+    const blockX = Math.floor(player.x / BLOCK_SIZE);
+    const blockY = Math.floor(player.y / BLOCK_SIZE);
+    const blockZ = Math.floor(player.z / BLOCK_SIZE);
+
+    const hitX = blockX + rayX;
+    const hitY = blockY;
+    const hitZ = blockZ + rayZ;
+
+    const selectedBlockType = Object.keys(player.inventory)[0];
+    if (selectedBlockType && player.inventory[selectedBlockType] > 0) {
+      setWorldBlock(hitX, hitY, hitZ, selectedBlockType);
+      player.inventory[selectedBlockType]--;
+      updateInventoryUI();
+    }
+  }
+});
+
+// Hide cursor
+document.body.style.cursor = 'none';
+
+// Start game
+updateInventoryUI();
+gameLoop();
+</script>
+</body>
+</html>

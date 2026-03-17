@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Voxel Sandbox</title>
+<style>
+html,body { margin:0; padding:0; overflow:hidden; background:#87ceeb; }
+canvas { display:block; }
+#ui {
+  position:fixed;
+  bottom:20px;
+  left:50%;
+  transform:translateX(-50%);
+  display:flex;
+  gap:6px;
+}
+.slot {
+  width:60px;
+  height:60px;
+  background:rgba(0,0,0,0.5);
+  border:3px solid #444;
+  color:white;
+  font-family:sans-serif;
+  text-align:center;
+  line-height:60px;
+  font-size:14px;
+}
+.slot.active { border-color:yellow; }
+#crosshair {
+  position:fixed;
+  left:50%;
+  top:50%;
+  width:10px;
+  height:10px;
+  margin:-5px;
+  border:2px solid white;
+  pointer-events:none;
+}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="crosshair"></div>
+<div id="ui"></div>
+
+<script>
+/* ===================== BASIC SETUP ===================== */
+const canvas = document.getElementById("c");
+const gl = canvas.getContext("webgl");
+canvas.width = innerWidth;
+canvas.height = innerHeight;
+
+const ui = document.getElementById("ui");
+
+window.onresize = () => {
+  canvas.width = innerWidth;
+  canvas.height = innerHeight;
+  gl.viewport(0,0,canvas.width,canvas.height);
+};
+
+/* ===================== SHADERS ===================== */
+const vs = `
+attribute vec3 p;
+uniform mat4 mvp;
+void main(){ gl_Position = mvp * vec4(p,1.0); }
+`;
+const fs = `
+precision mediump float;
+uniform vec3 color;
+void main(){ gl_FragColor = vec4(color,1.0); }
+`;
+function shader(type,src){
+  const s = gl.createShader(type);
+  gl.shaderSource(s,src);
+  gl.compileShader(s);
+  return s;
+}
+const prog = gl.createProgram();
+gl.attachShader(prog, shader(gl.VERTEX_SHADER,vs));
+gl.attachShader(prog, shader(gl.FRAGMENT_SHADER,fs));
+gl.linkProgram(prog);
+gl.useProgram(prog);
+
+const locP = gl.getAttribLocation(prog,"p");
+const locMVP = gl.getUniformLocation(prog,"mvp");
+const locColor = gl.getUniformLocation(prog,"color");
+
+/* ===================== MATH ===================== */
+const mat4 = {
+  mul:(a,b)=>{
+    let r=new Float32Array(16);
+    for(let i=0;i<4;i++)for(let j=0;j<4;j++)
+      r[i*4+j]=a[i*4]*b[j]+a[i*4+1]*b[j+4]+a[i*4+2]*b[j+8]+a[i*4+3]*b[j+12];
+    return r;
+  },
+  perspective:(f,a,n,fv)=>{
+    let t=Math.tan(f/2);
+    return new Float32Array([
+      1/(a*t),0,0,0,
+      0,1/t,0,0,
+      0,0,(n+fv)/(n-fv),-1,
+      0,0,(2*n*fv)/(n-fv),0
+    ]);
+  },
+  look:(p,r)=>{
+    let cx=Math.cos(r.x),sx=Math.sin(r.x);
+    let cy=Math.cos(r.y),sy=Math.sin(r.y);
+    return new Float32Array([
+      cy,0,-sy,0,
+      sy*sx,cx,cy*sx,0,
+      sy*cx,-sx,cy*cx,0,
+      -p.x,-p.y,-p.z,1
+    ]);
+  }
+};
+
+/* ===================== VOXELS ===================== */
+const CHUNK = 16;
+const world = new Map();
+function key(x,y,z){ return x+","+y+","+z; }
+
+function height(x,z){
+  return Math.floor(
+    4 +
+    Math.sin(x*0.15)*2 +
+    Math.cos(z*0.15)*2
+  );
+}
+
+function generateChunk(cx,cz){
+  for(let x=0;x<CHUNK;x++)for(let z=0;z<CHUNK;z++){
+    let wx=cx*CHUNK+x, wz=cz*CHUNK+z;
+    let h=height(wx,wz);
+    for(let y=0;y<=h;y++)
+      world.set(key(wx,y,wz),1);
+  }
+}
+
+/* ===================== PLAYER ===================== */
+const player = {x:0,y:10,z:0, vx:0,vy:0,vz:0, rx:0,ry:0, grounded:false};
+
+/* ===================== INVENTORY ===================== */
+const blocks = ["Dirt"];
+const inventory = {Dirt:0};
+let activeSlot = 0;
+
+function updateUI(){
+  ui.innerHTML="";
+  blocks.forEach((b,i)=>{
+    let d=document.createElement("div");
+    d.className="slot"+(i===activeSlot?" active":"");
+    d.textContent=b+" "+inventory[b];
+    ui.appendChild(d);
+  });
+}
+updateUI();
+
+/* ===================== DROPS ===================== */
+const drops=[];
+function spawnDrop(x,y,z){
+  drops.push({x,y,z,vy:0,rot:0});
+}
+
+/* ===================== INPUT ===================== */
+const keys={};
+onkeydown=e=>{
+  keys[e.code]=true;
+  if(e.code.startsWith("Digit")) activeSlot=parseInt(e.code[5])-1;
+};
+onkeyup=e=>keys[e.code]=false;
+
+canvas.onclick=()=>canvas.requestPointerLock();
+onmousemove=e=>{
+  if(document.pointerLockElement===canvas){
+    player.ry-=e.movementX*0.002;
+    player.rx-=e.movementY*0.002;
+    player.rx=Math.max(-1.5,Math.min(1.5,player.rx));
+  }
+};
+
+onmousedown=e=>{
+  if(document.pointerLockElement!==canvas) return;
+  let dir={
+    x:Math.sin(player.ry),
+    y:-Math.sin(player.rx),
+    z:Math.cos(player.ry)
+  };
+  for(let i=0;i<6;i++){
+    let bx=Math.floor(player.x+dir.x*i);
+    let by=Math.floor(player.y+dir.y*i);
+    let bz=Math.floor(player.z+dir.z*i);
+    let k=key(bx,by,bz);
+    if(world.has(k)){
+      if(e.button===0){
+        world.delete(k);
+        spawnDrop(bx+0.5,by+0.5,bz+0.5);
+      } else if(e.button===2){
+        let px=Math.floor(player.x);
+        let py=Math.floor(player.y);
+        let pz=Math.floor(player.z);
+        let pk=key(bx-dir.x|0,by-dir.y|0,bz-dir.z|0);
+        if(inventory.Dirt>0){
+          world.set(pk,1);
+          inventory.Dirt--;
+        }
+      }
+      updateUI();
+      break;
+    }
+  }
+};
+oncontextmenu=e=>e.preventDefault();
+
+/* ===================== GEOMETRY ===================== */
+const cube = new Float32Array([
+0,0,0,1,0,0,1,1,0,0,1,0,
+0,0,1,1,0,1,1,1,1,0,1,1,
+0,0,0,0,1,0,0,1,1,0,0,1,
+1,0,0,1,1,0,1,1,1,1,0,1,
+0,1,0,1,1,0,1,1,1,0,1,1,
+0,0,0,1,0,0,1,0,1,0,0,1
+]);
+const buf=gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+gl.bufferData(gl.ARRAY_BUFFER,cube,gl.STATIC_DRAW);
+gl.enableVertexAttribArray(locP);
+gl.vertexAttribPointer(locP,3,gl.FLOAT,false,0,0);
+
+/* ===================== LOOP ===================== */
+gl.enable(gl.DEPTH_TEST);
+function loop(){
+  gl.clearColor(0.5,0.7,1,1);
+  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+
+  /* movement */
+  let sp=0.05;
+  if(keys.KeyW){player.vx+=Math.sin(player.ry)*sp; player.vz+=Math.cos(player.ry)*sp;}
+  if(keys.KeyS){player.vx-=Math.sin(player.ry)*sp; player.vz-=Math.cos(player.ry)*sp;}
+  if(keys.KeyA){player.vx+=Math.sin(player.ry-1.57)*sp; player.vz+=Math.cos(player.ry-1.57)*sp;}
+  if(keys.KeyD){player.vx+=Math.sin(player.ry+1.57)*sp; player.vz+=Math.cos(player.ry+1.57)*sp;}
+  player.vy-=0.02;
+  if(keys.Space && player.grounded){ player.vy=0.35; }
+
+  player.x+=player.vx; player.y+=player.vy; player.z+=player.vz;
+  player.vx*=0.8; player.vz*=0.8;
+  player.grounded=false;
+
+  let below=key(Math.floor(player.x),Math.floor(player.y-1.7),Math.floor(player.z));
+  if(world.has(below)){
+    player.y=Math.floor(player.y-1.7)+1.7;
+    player.vy=0;
+    player.grounded=true;
+  }
+
+  /* chunks */
+  let cx=Math.floor(player.x/CHUNK);
+  let cz=Math.floor(player.z/CHUNK);
+  for(let x=-1;x<=1;x++)for(let z=-1;z<=1;z++)
+    generateChunk(cx+x,cz+z);
+
+  /* camera */
+  let proj=mat4.perspective(1.1,canvas.width/canvas.height,0.1,100);
+  let view=mat4.look(player,{x:player.rx,y:player.ry});
+  let vp=mat4.mul(proj,view);
+
+  /* draw blocks */
+  world.forEach((v,k)=>{
+    let [x,y,z]=k.split(",").map(Number);
+    let m=new Float32Array([
+      1,0,0,0,
+      0,1,0,0,
+      0,0,1,0,
+      x,y,z,1
+    ]);
+    gl.uniformMatrix4fv(locMVP,false,mat4.mul(vp,m));
+    gl.uniform3f(locColor,0.4,0.3,0.2);
+    gl.drawArrays(gl.TRIANGLES,0,36);
+  });
+
+  /* drops */
+  drops.forEach(d=>{
+    d.vy-=0.01;
+    d.y+=d.vy;
+    d.rot+=0.1;
+    if(d.y<height(d.x,d.z)+1){ d.y=height(d.x,d.z)+1; d.vy=0; }
+    if(Math.hypot(d.x-player.x,d.y-player.y,d.z-player.z)<1){
+      inventory.Dirt++;
+      updateUI();
+      d.dead=true;
+    }
+    let m=new Float32Array([
+      0.3,0,0,0,
+      0,0.3,0,0,
+      0,0,0.3,0,
+      d.x,d.y,d.z,1
+    ]);
+    gl.uniformMatrix4fv(locMVP,false,mat4.mul(vp,m));
+    gl.uniform3f(locColor,1,1,0);
+    gl.drawArrays(gl.TRIANGLES,0,36);
+  });
+  for(let i=drops.length-1;i>=0;i--) if(drops[i].dead) drops.splice(i,1);
+
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>

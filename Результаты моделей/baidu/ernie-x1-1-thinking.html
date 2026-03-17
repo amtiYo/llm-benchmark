@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voxel Sandbox</title>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/PointerLockControls.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        #inventory {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 10px;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
+            border-radius: 10px;
+        }
+        .slot {
+            width: 50px;
+            height: 50px;
+            border: 2px solid #555;
+            border-radius: 5px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-family: Arial;
+        }
+        .selected { border-color: #ff0; }
+        .block-count { font-size: 12px; }
+        #crosshair {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            width: 20px;
+            height: 20px;
+            transform: translate(-50%, -50%);
+            border: 2px solid white;
+            border-radius: 50%;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="crosshair"></div>
+    <div id="inventory">
+        <div class="slot selected" data-type="grass" id="slot1">
+            <div>🟩</div>
+            <div class="block-count" id="count1">0</div>
+        </div>
+        <div class="slot" data-type="dirt" id="slot2">
+            <div>🟫</div>
+            <div class="block-count" id="count2">0</div>
+        </div>
+        <div class="slot" data-type="stone" id="slot3">
+            <div>⬜</div>
+            <div class="block-count" id="count3">0</div>
+        </div>
+    </div>
+
+    <script>
+        // Game state
+        const state = {
+            player: {
+                position: new THREE.Vector3(0, 50, 0),
+                velocity: new THREE.Vector3(),
+                jumpPower: 5,
+                speed: 0.1,
+                onGround: false
+            },
+            blocks: {},
+            drops: [],
+            inventory: {
+                grass: 0,
+                dirt: 0,
+                stone: 0
+            },
+            activeSlot: 'grass',
+            chunkSize: 16,
+            chunkLoadDistance: 2,
+            loadedChunks: new Set()
+        };
+
+        // Initialize Three.js
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 2, 0);
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.body.appendChild(renderer.domElement);
+        
+        const controls = new THREE.PointerLockControls(camera, document.body);
+        
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0x404040);
+        scene.add(ambientLight);
+        const sunLight = new THREE.DirectionalLight(0xffffff, 1);
+        sunLight.position.set(1, 1, 1);
+        sunLight.castShadow = true;
+        scene.add(sunLight);
+
+        // Physics constants
+        const gravity = 0.05;
+        const terminalVelocity = 5;
+
+        // Generate procedural terrain using Simplex noise
+        function generateHeight(x, z) {
+            const frequency = 0.1;
+            const amplitude = 8;
+            const noise = (
+                Math.sin(x * frequency) * 0.5 +
+                Math.cos(z * frequency) * 0.5 +
+                Math.sin((x + z) * frequency * 0.5) * 0.5
+            );
+            return Math.floor(noise * amplitude + 10);
+        }
+
+        // Block rendering
+        function createBlockMesh(type) {
+            const geometry = new THREE.BoxGeometry(1, 1, 1);
+            const materials = {
+                grass: new THREE.MeshLambertMaterial({ color: 0x00ff00 }),
+                dirt: new THREE.MeshLambertMaterial({ color: 0x8B4513 }),
+                stone: new THREE.MeshLambertMaterial({ color: 0x808080 })
+            };
+            const mesh = new THREE.Mesh(geometry, materials[type]);
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            return mesh;
+        }
+
+        // Chunk management
+        function getChunkId(x, z) {
+            return `${Math.floor(x / state.chunkSize)}_${Math.floor(z / state.chunkSize)}`;
+        }
+
+        function generateChunk(cx, cz) {
+            const chunkId = getChunkId(cx * state.chunkSize, cz * state.chunkSize);
+            if (state.loadedChunks.has(chunkId)) return;
+            
+            const group = new THREE.Group();
+            for (let x = 0; x < state.chunkSize; x++) {
+                for (let z = 0; z < state.chunkSize; z++) {
+                    const height = generateHeight(cx * state.chunkSize + x, cz * state.chunkSize + z);
+                    for (let y = 0; y < height; y++) {
+                        const type = y === height - 1 ? 'grass' : 
+                                     y >= height - 3 ? 'dirt' : 'stone';
+                        const block = createBlockMesh(type);
+                        block.position.set(
+                            cx * state.chunkSize + x,
+                            y,
+                            cz * state.chunkSize + z
+                        );
+                        group.add(block);
+                        state.blocks[`${cx}_${x}_${y}_${cz}_${z}`] = block;
+                    }
+                }
+            }
+            scene.add(group);
+            state.loadedChunks.add(chunkId);
+        }
+
+        // Load visible chunks
+        function loadVisibleChunks() {
+            const playerChunkX = Math.floor(state.player.position.x / state.chunkSize);
+            const playerChunkZ = Math.floor(state.player.position.z / state.chunkSize);
+            
+            for (let x = playerChunkX - state.chunkLoadDistance; x <= playerChunkX + state.chunkLoadDistance; x++) {
+                for (let z = playerChunkZ - state.chunkLoadDistance; z <= playerChunkZ + state.chunkLoadDistance; z++) {
+                    generateChunk(x, z);
+                }
+            }
+        }
+
+        // Block interaction
+        function breakBlock(block) {
+            const key = getBlockKey(block.position);
+            if (state.blocks[key]) {
+                delete state.blocks[key];
+                scene.remove(block);
+                
+                // Create drop
+                const drop = {
+                    position: block.position.clone(),
+                    velocity: new THREE.Vector3(0, 0.1, 0),
+                    rotation: 0,
+                    type: block.material.color.getHex() === 0x00ff00 ? 'grass' :
+                          block.material.color.getHex() === 0x8B4513 ? 'dirt' : 'stone',
+                    mesh: null
+                };
+                
+                // Add to inventory
+                state.inventory[drop.type]++;
+                updateInventoryUI();
+                
+                state.drops.push(drop);
+            }
+        }
+
+        function getBlockKey(position) {
+            return `${Math.floor(position.x)}_${Math.floor(position.y)}_${Math.floor(position.z)}`;
+        }
+
+        function placeBlock(position, type) {
+            const key = getBlockKey(position);
+            if (!state.blocks[key]) {
+                const block = createBlockMesh(type);
+                block.position.copy(position);
+                scene.add(block);
+                state.blocks[key] = block;
+                state.inventory[type]--;
+                updateInventoryUI();
+                return true;
+            }
+            return false;
+        }
+
+        // Drop physics
+        function updateDrops() {
+            for (let i = state.drops.length - 1; i >= 0; i--) {
+                const drop = state.drops[i];
+                
+                // Apply gravity
+                drop.velocity.y -= gravity;
+                if (drop.velocity.y < -terminalVelocity) {
+                    drop.velocity.y = -terminalVelocity;
+                }
+                
+                // Update position
+                drop.position.add(drop.velocity);
+                
+                // Simple collision with ground
+                if (drop.position.y <= 0) {
+                    drop.position.y = 0;
+                    drop.velocity.y = 0;
+                }
+                
+                // Rotation
+                drop.rotation += 0.1;
+                
+                // Check pickup
+                const playerPos = state.player.position;
+                const distance = playerPos.distanceTo(drop.position);
+                if (distance < 2) {
+                    state.inventory[drop.type]++;
+                    updateInventoryUI();
+                    state.drops.splice(i, 1);
+                }
+            }
+        }
+
+        // Inventory UI
+        function updateInventoryUI() {
+            document.querySelectorAll('.block-count').forEach(el => {
+                const type = el.parentElement.dataset.type;
+                el.textContent = state.inventory[type] || 0;
+            });
+        }
+
+        // Player movement and collision
+        function updatePlayer() {
+            // Apply gravity
+            state.player.velocity.y -= gravity;
+            
+            // Handle movement
+            const moveVector = new THREE.Vector3();
+            if (controls.isLocked) {
+                const speed = state.player.speed;
+                if (controls.moveForward) moveVector.z -= speed;
+                if (controls.moveBack) moveVector.z += speed;
+                if (controls.moveLeft) moveVector.x -= speed;
+                if (controls.moveRight) moveVector.x += speed;
+            }
+            
+            moveVector.applyQuaternion(camera.quaternion);
+            moveVector.y = 0;
+            
+            // Jumping
+            if (state.player.onGround && controls.moveUp) {
+                state.player.velocity.y = state.player.jumpPower;
+                state.player.onGround = false;
+            }
+            
+            // Update position
+            state.player.position.add(moveVector);
+            
+            // Collision detection
+            state.player.onGround = false;
+            const playerPos = state.player.position.clone();
+            playerPos.y -= 1.8; // feet position
+            
+            for (let x = -1; x <= 1; x++) {
+                for (let z = -1; z <= 1; z++) {
+                    const blockPos = new THREE.Vector3(
+                        Math.floor(playerPos.x + x),
+                        Math.floor(playerPos.y),
+                        Math.floor(playerPos.z + z)
+                    );
+                    const key = getBlockKey(blockPos);
+                    if (state.blocks[key]) {
+                        // Collision response
+                        const block = state.blocks[key];
+                        const blockCenter = blockPos.clone().add(new THREE.Vector3(0.5, 0.5, 0.5));
+                        const direction = playerPos.clone().sub(blockCenter).normalize();
+                        
+                        // Push player out of block
+                        state.player.position.add(direction.multiplyScalar(0.1));
+                        
+                        // Ground detection
+                        if (direction.y > 0.5) {
+                            state.player.onGround = true;
+                            state.player.velocity.y = 0;
+                        }
+                    }
+                }
+            }
+            
+            // Update camera position
+            camera.position.copy(state.player.position);
+            camera.position.y += 1.6; // eye level
+        }
+
+        // Raycasting for block interaction
+        function raycast() {
+            const raycaster = new THREE.Raycaster();
+            raycaster.setFromCamera(new THREE.Vector2(), camera);
+            
+            const blocks = Object.values(state.blocks);
+            const intersects = raycaster.intersectObjects(blocks);
+            
+            if (intersects.length > 0) {
+                const intersect = intersects[0];
+                const block = intersect.object;
+                const blockPos = block.position.clone();
+                
+                // Break block
+                if (controls.isLocked && controls.moveDown) {
+                    breakBlock(block);
+                }
+                
+                // Place block
+                if (controls.isLocked && controls.moveRight) {
+                    const forward = new THREE.Vector3();
+                    camera.getWorldDirection(forward);
+                    forward.y = 0;
+                    forward.normalize();
+                    
+                    const placePos = blockPos.clone().add(forward);
+                    placeBlock(placePos, state.activeSlot);
+                }
+            }
+        }
+
+        // UI Interactions
+        document.querySelectorAll('.slot').forEach(slot => {
+            slot.addEventListener('click', () => {
+                document.querySelectorAll('.slot').forEach(s => s.classList.remove('selected'));
+                slot.classList.add('selected');
+                state.activeSlot = slot.dataset.type;
+            });
+        });
+
+        // Game loop
+        function gameLoop() {
+            loadVisibleChunks();
+            updatePlayer();
+            updateDrops();
+            raycast();
+            renderer.render(scene, camera);
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Initialize controls
+        document.addEventListener('click', () => {
+            if (!controls.isLocked) {
+                controls.lock();
+                document.getElementById('crosshair').style.display = 'block';
+            }
+        });
+
+        controls.addEventListener('lock', () => {
+            document.getElementById('crosshair').style.display = 'block';
+        });
+
+        controls.addEventListener('unlock', () => {
+            document.getElementById('crosshair').style.display = 'none';
+        });
+
+        // Start game loop
+        gameLoop();
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>

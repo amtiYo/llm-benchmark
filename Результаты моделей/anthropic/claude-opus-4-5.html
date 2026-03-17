@@ -1,0 +1,1332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voxel Sandbox</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            overflow: hidden;
+            background: #1a1a2e;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        #gameCanvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #crosshair {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 24px;
+            height: 24px;
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        #crosshair::before,
+        #crosshair::after {
+            content: '';
+            position: absolute;
+            background: white;
+            box-shadow: 0 0 3px rgba(0,0,0,0.8);
+        }
+
+        #crosshair::before {
+            width: 2px;
+            height: 16px;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        #crosshair::after {
+            width: 16px;
+            height: 2px;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        #inventory {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 4px;
+            padding: 8px;
+            background: rgba(0, 0, 0, 0.6);
+            border-radius: 8px;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            z-index: 100;
+        }
+
+        .inv-slot {
+            width: 56px;
+            height: 56px;
+            background: rgba(80, 80, 80, 0.7);
+            border: 2px solid rgba(100, 100, 100, 0.8);
+            border-radius: 6px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .inv-slot:hover {
+            background: rgba(100, 100, 100, 0.8);
+        }
+
+        .inv-slot.selected {
+            border-color: #fff;
+            box-shadow: 0 0 12px rgba(255, 255, 255, 0.5);
+            background: rgba(120, 120, 120, 0.8);
+        }
+
+        .inv-slot .block-preview {
+            width: 36px;
+            height: 36px;
+            border-radius: 4px;
+        }
+
+        .inv-slot .count {
+            position: absolute;
+            bottom: 2px;
+            right: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            color: white;
+            text-shadow: 1px 1px 2px black, -1px -1px 2px black;
+        }
+
+        .inv-slot .hotkey {
+            position: absolute;
+            top: 2px;
+            left: 4px;
+            font-size: 10px;
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        #debug {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-size: 13px;
+            font-family: 'Consolas', monospace;
+            text-shadow: 1px 1px 2px black;
+            z-index: 100;
+            background: rgba(0, 0, 0, 0.4);
+            padding: 10px;
+            border-radius: 6px;
+        }
+
+        #instructions {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.85);
+            color: white;
+            padding: 40px;
+            border-radius: 16px;
+            text-align: center;
+            z-index: 200;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+        }
+
+        #instructions h1 {
+            margin-bottom: 20px;
+            color: #7dd87d;
+            font-size: 28px;
+        }
+
+        #instructions p {
+            margin: 8px 0;
+            font-size: 15px;
+            color: #ccc;
+        }
+
+        #instructions .key {
+            display: inline-block;
+            background: rgba(255, 255, 255, 0.15);
+            padding: 3px 10px;
+            border-radius: 4px;
+            margin: 0 3px;
+            font-weight: bold;
+            color: #fff;
+        }
+
+        #instructions button {
+            margin-top: 25px;
+            padding: 14px 40px;
+            font-size: 18px;
+            background: linear-gradient(135deg, #4a7c4a, #2d5a2d);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        #instructions button:hover {
+            background: linear-gradient(135deg, #5a9c5a, #3d7a3d);
+            transform: scale(1.05);
+        }
+
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <div id="crosshair"></div>
+    
+    <div id="inventory"></div>
+    
+    <div id="debug">
+        <div>FPS: <span id="fps">0</span></div>
+        <div>Position: <span id="pos">0, 0, 0</span></div>
+        <div>Chunks: <span id="chunks">0</span></div>
+    </div>
+
+    <div id="instructions">
+        <h1>🌍 Voxel Sandbox</h1>
+        <p><span class="key">W</span><span class="key">A</span><span class="key">S</span><span class="key">D</span> — Move</p>
+        <p><span class="key">Space</span> — Jump</p>
+        <p><span class="key">Mouse</span> — Look around</p>
+        <p><span class="key">LMB</span> — Break block</p>
+        <p><span class="key">RMB</span> — Place block</p>
+        <p><span class="key">1-9</span> — Select inventory slot</p>
+        <p><span class="key">Scroll</span> — Change slot</p>
+        <button onclick="startGame()">Click to Play</button>
+    </div>
+
+    <script>
+        // Block type definitions with colors
+        const BLOCK_TYPES = {
+            0: { name: 'Air', color: null },
+            1: { name: 'Grass', color: '#4a8f4a', topColor: '#5cb85c', bottomColor: '#6b4423' },
+            2: { name: 'Dirt', color: '#6b4423' },
+            3: { name: 'Stone', color: '#808080' },
+            4: { name: 'Sand', color: '#e6d9a8' },
+            5: { name: 'Wood', color: '#8b5a2b' },
+            6: { name: 'Leaves', color: '#228b22' },
+            7: { name: 'Water', color: '#4a90d9', transparent: true }
+        };
+
+        // Game constants
+        const CHUNK_SIZE = 16;
+        const CHUNK_HEIGHT = 64;
+        const RENDER_DISTANCE = 4;
+        const BLOCK_SIZE = 1;
+        const GRAVITY = -25;
+        const JUMP_FORCE = 9;
+        const PLAYER_HEIGHT = 1.7;
+        const PLAYER_WIDTH = 0.6;
+        const MOVE_SPEED = 5;
+        const PICK_UP_DISTANCE = 1.8;
+
+        // Canvas and WebGL context
+        const canvas = document.getElementById('gameCanvas');
+        const gl = canvas.getContext('webgl', { antialias: true, alpha: false });
+
+        // Game state
+        let isPlaying = false;
+        let lastTime = 0;
+        let deltaTime = 0;
+        let frameCount = 0;
+        let fpsTime = 0;
+
+        // Player state
+        const player = {
+            x: 0,
+            y: 40,
+            z: 0,
+            vx: 0,
+            vy: 0,
+            vz: 0,
+            yaw: 0,
+            pitch: 0,
+            onGround: false
+        };
+
+        // Input state
+        const keys = {};
+        let selectedSlot = 0;
+
+        // Inventory: track block counts
+        const inventory = {
+            slots: [
+                { type: 1, count: 0 },
+                { type: 2, count: 0 },
+                { type: 3, count: 0 },
+                { type: 4, count: 0 },
+                { type: 5, count: 0 },
+                { type: 6, count: 0 },
+                { type: 0, count: 0 },
+                { type: 0, count: 0 },
+                { type: 0, count: 0 }
+            ]
+        };
+
+        // World data
+        const chunks = new Map();
+        const droppedItems = [];
+
+        // Noise functions for terrain generation
+        class SimplexNoise {
+            constructor(seed = Math.random() * 10000) {
+                this.p = new Uint8Array(512);
+                const perm = new Uint8Array(256);
+                for (let i = 0; i < 256; i++) perm[i] = i;
+                
+                // Seed-based shuffle
+                let s = seed;
+                for (let i = 255; i > 0; i--) {
+                    s = (s * 16807) % 2147483647;
+                    const j = s % (i + 1);
+                    [perm[i], perm[j]] = [perm[j], perm[i]];
+                }
+                
+                for (let i = 0; i < 512; i++) {
+                    this.p[i] = perm[i & 255];
+                }
+            }
+
+            noise2D(x, y) {
+                const F2 = 0.5 * (Math.sqrt(3) - 1);
+                const G2 = (3 - Math.sqrt(3)) / 6;
+                
+                const s = (x + y) * F2;
+                const i = Math.floor(x + s);
+                const j = Math.floor(y + s);
+                
+                const t = (i + j) * G2;
+                const X0 = i - t;
+                const Y0 = j - t;
+                const x0 = x - X0;
+                const y0 = y - Y0;
+                
+                const i1 = x0 > y0 ? 1 : 0;
+                const j1 = x0 > y0 ? 0 : 1;
+                
+                const x1 = x0 - i1 + G2;
+                const y1 = y0 - j1 + G2;
+                const x2 = x0 - 1 + 2 * G2;
+                const y2 = y0 - 1 + 2 * G2;
+                
+                const ii = i & 255;
+                const jj = j & 255;
+                
+                const grad = (hash, x, y) => {
+                    const h = hash & 7;
+                    const u = h < 4 ? x : y;
+                    const v = h < 4 ? y : x;
+                    return ((h & 1) ? -u : u) + ((h & 2) ? -2 * v : 2 * v);
+                };
+                
+                let n0 = 0, n1 = 0, n2 = 0;
+                
+                let t0 = 0.5 - x0 * x0 - y0 * y0;
+                if (t0 >= 0) {
+                    t0 *= t0;
+                    n0 = t0 * t0 * grad(this.p[ii + this.p[jj]], x0, y0);
+                }
+                
+                let t1 = 0.5 - x1 * x1 - y1 * y1;
+                if (t1 >= 0) {
+                    t1 *= t1;
+                    n1 = t1 * t1 * grad(this.p[ii + i1 + this.p[jj + j1]], x1, y1);
+                }
+                
+                let t2 = 0.5 - x2 * x2 - y2 * y2;
+                if (t2 >= 0) {
+                    t2 *= t2;
+                    n2 = t2 * t2 * grad(this.p[ii + 1 + this.p[jj + 1]], x2, y2);
+                }
+                
+                return 70 * (n0 + n1 + n2);
+            }
+
+            octaveNoise2D(x, y, octaves, persistence) {
+                let total = 0;
+                let frequency = 1;
+                let amplitude = 1;
+                let maxValue = 0;
+                
+                for (let i = 0; i < octaves; i++) {
+                    total += this.noise2D(x * frequency, y * frequency) * amplitude;
+                    maxValue += amplitude;
+                    amplitude *= persistence;
+                    frequency *= 2;
+                }
+                
+                return total / maxValue;
+            }
+        }
+
+        const noise = new SimplexNoise(12345);
+
+        // Generate terrain height at position
+        function getTerrainHeight(x, z) {
+            // Base terrain with multiple octaves
+            const baseHeight = noise.octaveNoise2D(x * 0.01, z * 0.01, 4, 0.5);
+            
+            // Hills variation
+            const hills = noise.octaveNoise2D(x * 0.03, z * 0.03, 2, 0.5) * 0.5;
+            
+            // Flat plains factor
+            const flatness = (noise.noise2D(x * 0.005, z * 0.005) + 1) * 0.5;
+            
+            // Combine for varied terrain
+            const height = baseHeight * (1 - flatness * 0.7) + hills * flatness;
+            
+            return Math.floor(20 + height * 15);
+        }
+
+        // Get block type at position
+        function getBlockType(x, y, z) {
+            const surfaceHeight = getTerrainHeight(x, z);
+            
+            if (y > surfaceHeight) return 0; // Air
+            if (y === surfaceHeight) return 1; // Grass
+            if (y > surfaceHeight - 4) return 2; // Dirt
+            return 3; // Stone
+        }
+
+        // Chunk key helper
+        function chunkKey(cx, cz) {
+            return `${cx},${cz}`;
+        }
+
+        // Generate a chunk
+        function generateChunk(cx, cz) {
+            const key = chunkKey(cx, cz);
+            if (chunks.has(key)) return chunks.get(key);
+
+            const chunk = {
+                cx, cz,
+                blocks: new Uint8Array(CHUNK_SIZE * CHUNK_HEIGHT * CHUNK_SIZE),
+                mesh: null,
+                dirty: true
+            };
+
+            // Fill chunk with blocks
+            for (let x = 0; x < CHUNK_SIZE; x++) {
+                for (let z = 0; z < CHUNK_SIZE; z++) {
+                    const worldX = cx * CHUNK_SIZE + x;
+                    const worldZ = cz * CHUNK_SIZE + z;
+                    
+                    for (let y = 0; y < CHUNK_HEIGHT; y++) {
+                        const idx = x + y * CHUNK_SIZE + z * CHUNK_SIZE * CHUNK_HEIGHT;
+                        chunk.blocks[idx] = getBlockType(worldX, y, worldZ);
+                    }
+                }
+            }
+
+            chunks.set(key, chunk);
+            return chunk;
+        }
+
+        // Get block at world position
+        function getBlock(x, y, z) {
+            if (y < 0 || y >= CHUNK_HEIGHT) return 0;
+            
+            const cx = Math.floor(x / CHUNK_SIZE);
+            const cz = Math.floor(z / CHUNK_SIZE);
+            const key = chunkKey(cx, cz);
+            
+            const chunk = chunks.get(key);
+            if (!chunk) return 0;
+            
+            const lx = ((x % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+            const lz = ((z % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+            const idx = lx + y * CHUNK_SIZE + lz * CHUNK_SIZE * CHUNK_HEIGHT;
+            
+            return chunk.blocks[idx];
+        }
+
+        // Set block at world position
+        function setBlock(x, y, z, type) {
+            if (y < 0 || y >= CHUNK_HEIGHT) return false;
+            
+            const cx = Math.floor(x / CHUNK_SIZE);
+            const cz = Math.floor(z / CHUNK_SIZE);
+            const key = chunkKey(cx, cz);
+            
+            const chunk = chunks.get(key);
+            if (!chunk) return false;
+            
+            const lx = ((x % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+            const lz = ((z % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+            const idx = lx + y * CHUNK_SIZE + lz * CHUNK_SIZE * CHUNK_HEIGHT;
+            
+            chunk.blocks[idx] = type;
+            chunk.dirty = true;
+            
+            // Mark adjacent chunks as dirty if on border
+            if (lx === 0) markChunkDirty(cx - 1, cz);
+            if (lx === CHUNK_SIZE - 1) markChunkDirty(cx + 1, cz);
+            if (lz === 0) markChunkDirty(cx, cz - 1);
+            if (lz === CHUNK_SIZE - 1) markChunkDirty(cx, cz + 1);
+            
+            return true;
+        }
+
+        function markChunkDirty(cx, cz) {
+            const chunk = chunks.get(chunkKey(cx, cz));
+            if (chunk) chunk.dirty = true;
+        }
+
+        // WebGL shader setup
+        const vsSource = `
+            attribute vec3 aPosition;
+            attribute vec3 aColor;
+            attribute vec3 aNormal;
+            
+            uniform mat4 uProjection;
+            uniform mat4 uView;
+            
+            varying vec3 vColor;
+            varying vec3 vNormal;
+            varying float vFog;
+            
+            void main() {
+                vec4 worldPos = vec4(aPosition, 1.0);
+                vec4 viewPos = uView * worldPos;
+                gl_Position = uProjection * viewPos;
+                
+                vColor = aColor;
+                vNormal = aNormal;
+                vFog = clamp(length(viewPos.xyz) / 80.0, 0.0, 1.0);
+            }
+        `;
+
+        const fsSource = `
+            precision mediump float;
+            
+            varying vec3 vColor;
+            varying vec3 vNormal;
+            varying float vFog;
+            
+            void main() {
+                vec3 lightDir = normalize(vec3(0.5, 1.0, 0.3));
+                float light = max(dot(vNormal, lightDir), 0.0) * 0.5 + 0.5;
+                
+                // Ambient occlusion based on face direction
+                float ao = 1.0;
+                if (vNormal.y < 0.0) ao = 0.6;
+                else if (vNormal.y == 0.0) ao = 0.8;
+                
+                vec3 color = vColor * light * ao;
+                vec3 fogColor = vec3(0.6, 0.75, 0.95);
+                color = mix(color, fogColor, vFog * vFog);
+                
+                gl_FragColor = vec4(color, 1.0);
+            }
+        `;
+
+        // Compile shader
+        function compileShader(type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                console.error('Shader compile error:', gl.getShaderInfoLog(shader));
+                gl.deleteShader(shader);
+                return null;
+            }
+            return shader;
+        }
+
+        // Create shader program
+        let shaderProgram, aPosition, aColor, aNormal, uProjection, uView;
+
+        function initShaders() {
+            const vs = compileShader(gl.VERTEX_SHADER, vsSource);
+            const fs = compileShader(gl.FRAGMENT_SHADER, fsSource);
+            
+            shaderProgram = gl.createProgram();
+            gl.attachShader(shaderProgram, vs);
+            gl.attachShader(shaderProgram, fs);
+            gl.linkProgram(shaderProgram);
+            
+            if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
+                console.error('Program link error:', gl.getProgramInfoLog(shaderProgram));
+                return;
+            }
+            
+            gl.useProgram(shaderProgram);
+            
+            aPosition = gl.getAttribLocation(shaderProgram, 'aPosition');
+            aColor = gl.getAttribLocation(shaderProgram, 'aColor');
+            aNormal = gl.getAttribLocation(shaderProgram, 'aNormal');
+            uProjection = gl.getUniformLocation(shaderProgram, 'uProjection');
+            uView = gl.getUniformLocation(shaderProgram, 'uView');
+        }
+
+        // Matrix utilities
+        function mat4Perspective(fov, aspect, near, far) {
+            const f = 1.0 / Math.tan(fov / 2);
+            return new Float32Array([
+                f / aspect, 0, 0, 0,
+                0, f, 0, 0,
+                0, 0, (far + near) / (near - far), -1,
+                0, 0, (2 * far * near) / (near - far), 0
+            ]);
+        }
+
+        function mat4LookAt(eye, center, up) {
+            const zAxis = normalize([eye[0] - center[0], eye[1] - center[1], eye[2] - center[2]]);
+            const xAxis = normalize(cross(up, zAxis));
+            const yAxis = cross(zAxis, xAxis);
+            
+            return new Float32Array([
+                xAxis[0], yAxis[0], zAxis[0], 0,
+                xAxis[1], yAxis[1], zAxis[1], 0,
+                xAxis[2], yAxis[2], zAxis[2], 0,
+                -dot(xAxis, eye), -dot(yAxis, eye), -dot(zAxis, eye), 1
+            ]);
+        }
+
+        function normalize(v) {
+            const len = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+            return [v[0] / len, v[1] / len, v[2] / len];
+        }
+
+        function cross(a, b) {
+            return [
+                a[1] * b[2] - a[2] * b[1],
+                a[2] * b[0] - a[0] * b[2],
+                a[0] * b[1] - a[1] * b[0]
+            ];
+        }
+
+        function dot(a, b) {
+            return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        }
+
+        // Parse hex color to RGB
+        function hexToRgb(hex) {
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? [
+                parseInt(result[1], 16) / 255,
+                parseInt(result[2], 16) / 255,
+                parseInt(result[3], 16) / 255
+            ] : [1, 1, 1];
+        }
+
+        // Build chunk mesh
+        function buildChunkMesh(chunk) {
+            const positions = [];
+            const colors = [];
+            const normals = [];
+
+            const faces = [
+                { dir: [0, 1, 0], corners: [[0,1,0], [1,1,0], [1,1,1], [0,1,1]], normal: [0, 1, 0] },
+                { dir: [0, -1, 0], corners: [[0,0,1], [1,0,1], [1,0,0], [0,0,0]], normal: [0, -1, 0] },
+                { dir: [1, 0, 0], corners: [[1,0,0], [1,0,1], [1,1,1], [1,1,0]], normal: [1, 0, 0] },
+                { dir: [-1, 0, 0], corners: [[0,0,1], [0,0,0], [0,1,0], [0,1,1]], normal: [-1, 0, 0] },
+                { dir: [0, 0, 1], corners: [[0,0,1], [0,1,1], [1,1,1], [1,0,1]], normal: [0, 0, 1] },
+                { dir: [0, 0, -1], corners: [[1,0,0], [1,1,0], [0,1,0], [0,0,0]], normal: [0, 0, -1] }
+            ];
+
+            for (let x = 0; x < CHUNK_SIZE; x++) {
+                for (let y = 0; y < CHUNK_HEIGHT; y++) {
+                    for (let z = 0; z < CHUNK_SIZE; z++) {
+                        const idx = x + y * CHUNK_SIZE + z * CHUNK_SIZE * CHUNK_HEIGHT;
+                        const blockType = chunk.blocks[idx];
+                        
+                        if (blockType === 0) continue;
+
+                        const worldX = chunk.cx * CHUNK_SIZE + x;
+                        const worldZ = chunk.cz * CHUNK_SIZE + z;
+                        const block = BLOCK_TYPES[blockType];
+
+                        for (const face of faces) {
+                            const nx = worldX + face.dir[0];
+                            const ny = y + face.dir[1];
+                            const nz = worldZ + face.dir[2];
+                            
+                            const neighbor = getBlock(nx, ny, nz);
+                            if (neighbor !== 0) continue;
+
+                            // Determine face color
+                            let faceColor = block.color;
+                            if (face.dir[1] === 1 && block.topColor) faceColor = block.topColor;
+                            if (face.dir[1] === -1 && block.bottomColor) faceColor = block.bottomColor;
+                            
+                            const rgb = hexToRgb(faceColor);
+
+                            // Add two triangles for the face
+                            const c = face.corners;
+                            const addVertex = (corner) => {
+                                positions.push(worldX + corner[0], y + corner[1], worldZ + corner[2]);
+                                colors.push(...rgb);
+                                normals.push(...face.normal);
+                            };
+
+                            addVertex(c[0]); addVertex(c[1]); addVertex(c[2]);
+                            addVertex(c[0]); addVertex(c[2]); addVertex(c[3]);
+                        }
+                    }
+                }
+            }
+
+            // Create WebGL buffers
+            if (positions.length === 0) {
+                chunk.mesh = null;
+                chunk.dirty = false;
+                return;
+            }
+
+            const posBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+
+            const colorBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colors), gl.STATIC_DRAW);
+
+            const normalBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(normals), gl.STATIC_DRAW);
+
+            chunk.mesh = {
+                posBuffer,
+                colorBuffer,
+                normalBuffer,
+                vertexCount: positions.length / 3
+            };
+            chunk.dirty = false;
+        }
+
+        // Render chunk
+        function renderChunk(chunk) {
+            if (!chunk.mesh) return;
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, chunk.mesh.posBuffer);
+            gl.vertexAttribPointer(aPosition, 3, gl.FLOAT, false, 0, 0);
+            gl.enableVertexAttribArray(aPosition);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, chunk.mesh.colorBuffer);
+            gl.vertexAttribPointer(aColor, 3, gl.FLOAT, false, 0, 0);
+            gl.enableVertexAttribArray(aColor);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, chunk.mesh.normalBuffer);
+            gl.vertexAttribPointer(aNormal, 3, gl.FLOAT, false, 0, 0);
+            gl.enableVertexAttribArray(aNormal);
+
+            gl.drawArrays(gl.TRIANGLES, 0, chunk.mesh.vertexCount);
+        }
+
+        // Dropped item mesh (simple cube)
+        let itemMesh = null;
+
+        function createItemMesh() {
+            const s = 0.15;
+            const positions = [];
+            const cols = [];
+            const norms = [];
+
+            const faces = [
+                { corners: [[0,1,0], [1,1,0], [1,1,1], [0,1,1]], normal: [0, 1, 0] },
+                { corners: [[0,0,1], [1,0,1], [1,0,0], [0,0,0]], normal: [0, -1, 0] },
+                { corners: [[1,0,0], [1,0,1], [1,1,1], [1,1,0]], normal: [1, 0, 0] },
+                { corners: [[0,0,1], [0,0,0], [0,1,0], [0,1,1]], normal: [-1, 0, 0] },
+                { corners: [[0,0,1], [0,1,1], [1,1,1], [1,0,1]], normal: [0, 0, 1] },
+                { corners: [[1,0,0], [1,1,0], [0,1,0], [0,0,0]], normal: [0, 0, -1] }
+            ];
+
+            for (const face of faces) {
+                const c = face.corners;
+                const addVertex = (corner) => {
+                    positions.push((corner[0] - 0.5) * s, (corner[1] - 0.5) * s, (corner[2] - 0.5) * s);
+                    cols.push(1, 1, 1);
+                    norms.push(...face.normal);
+                };
+                addVertex(c[0]); addVertex(c[1]); addVertex(c[2]);
+                addVertex(c[0]); addVertex(c[2]); addVertex(c[3]);
+            }
+
+            const posBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+
+            const colorBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(cols), gl.STATIC_DRAW);
+
+            const normalBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(norms), gl.STATIC_DRAW);
+
+            itemMesh = { posBuffer, colorBuffer, normalBuffer, vertexCount: positions.length / 3 };
+        }
+
+        // Render dropped items
+        function renderDroppedItems(viewMatrix) {
+            if (!itemMesh || droppedItems.length === 0) return;
+
+            for (const item of droppedItems) {
+                const block = BLOCK_TYPES[item.type];
+                const rgb = hexToRgb(block.color);
+                
+                // Update rotation
+                item.rotation += deltaTime * 2;
+                
+                // Create transform for this item
+                const cos = Math.cos(item.rotation);
+                const sin = Math.sin(item.rotation);
+                const bobY = Math.sin(item.rotation * 2) * 0.05;
+                
+                // Build transformed positions
+                const positions = [];
+                const s = 0.15;
+                const faces = [
+                    { corners: [[0,1,0], [1,1,0], [1,1,1], [0,1,1]] },
+                    { corners: [[0,0,1], [1,0,1], [1,0,0], [0,0,0]] },
+                    { corners: [[1,0,0], [1,0,1], [1,1,1], [1,1,0]] },
+                    { corners: [[0,0,1], [0,0,0], [0,1,0], [0,1,1]] },
+                    { corners: [[0,0,1], [0,1,1], [1,1,1], [1,0,1]] },
+                    { corners: [[1,0,0], [1,1,0], [0,1,0], [0,0,0]] }
+                ];
+
+                for (const face of faces) {
+                    const c = face.corners;
+                    const addVertex = (corner) => {
+                        let lx = (corner[0] - 0.5) * s;
+                        let ly = (corner[1] - 0.5) * s;
+                        let lz = (corner[2] - 0.5) * s;
+                        
+                        // Rotate around Y
+                        const rx = lx * cos - lz * sin;
+                        const rz = lx * sin + lz * cos;
+                        
+                        positions.push(item.x + rx, item.y + ly + bobY, item.z + rz);
+                    };
+                    addVertex(c[0]); addVertex(c[1]); addVertex(c[2]);
+                    addVertex(c[0]); addVertex(c[2]); addVertex(c[3]);
+                }
+
+                // Update color buffer with block color
+                const colors = [];
+                for (let i = 0; i < 36; i++) {
+                    colors.push(...rgb);
+                }
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, itemMesh.posBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.DYNAMIC_DRAW);
+                gl.vertexAttribPointer(aPosition, 3, gl.FLOAT, false, 0, 0);
+                gl.enableVertexAttribArray(aPosition);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, itemMesh.colorBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colors), gl.DYNAMIC_DRAW);
+                gl.vertexAttribPointer(aColor, 3, gl.FLOAT, false, 0, 0);
+                gl.enableVertexAttribArray(aColor);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, itemMesh.normalBuffer);
+                gl.vertexAttribPointer(aNormal, 3, gl.FLOAT, false, 0, 0);
+                gl.enableVertexAttribArray(aNormal);
+
+                gl.drawArrays(gl.TRIANGLES, 0, itemMesh.vertexCount);
+            }
+        }
+
+        // Raycast for block selection
+        function raycast(maxDist = 6) {
+            const dirX = -Math.sin(player.yaw) * Math.cos(player.pitch);
+            const dirY = Math.sin(player.pitch);
+            const dirZ = -Math.cos(player.yaw) * Math.cos(player.pitch);
+
+            const eyeY = player.y + PLAYER_HEIGHT - 0.2;
+            let x = player.x;
+            let y = eyeY;
+            let z = player.z;
+
+            let prevX = Math.floor(x);
+            let prevY = Math.floor(y);
+            let prevZ = Math.floor(z);
+
+            const step = 0.05;
+            for (let t = 0; t < maxDist; t += step) {
+                x = player.x + dirX * t;
+                y = eyeY + dirY * t;
+                z = player.z + dirZ * t;
+
+                const bx = Math.floor(x);
+                const by = Math.floor(y);
+                const bz = Math.floor(z);
+
+                if (bx !== prevX || by !== prevY || bz !== prevZ) {
+                    const block = getBlock(bx, by, bz);
+                    if (block !== 0) {
+                        return { x: bx, y: by, z: bz, prevX, prevY, prevZ, block };
+                    }
+                    prevX = bx;
+                    prevY = by;
+                    prevZ = bz;
+                }
+            }
+
+            return null;
+        }
+
+        // Break block
+        function breakBlock() {
+            const hit = raycast();
+            if (!hit) return;
+
+            const blockType = hit.block;
+            
+            // Create dropped item
+            droppedItems.push({
+                type: blockType,
+                x: hit.x + 0.5,
+                y: hit.y + 0.5,
+                z: hit.z + 0.5,
+                vy: 3,
+                rotation: Math.random() * Math.PI * 2
+            });
+
+            setBlock(hit.x, hit.y, hit.z, 0);
+        }
+
+        // Place block
+        function placeBlock() {
+            const slot = inventory.slots[selectedSlot];
+            if (slot.count <= 0 || slot.type === 0) return;
+
+            const hit = raycast();
+            if (!hit) return;
+
+            // Check if placement position is inside player
+            const px = hit.prevX;
+            const py = hit.prevY;
+            const pz = hit.prevZ;
+
+            const playerMinX = player.x - PLAYER_WIDTH / 2;
+            const playerMaxX = player.x + PLAYER_WIDTH / 2;
+            const playerMinY = player.y;
+            const playerMaxY = player.y + PLAYER_HEIGHT;
+            const playerMinZ = player.z - PLAYER_WIDTH / 2;
+            const playerMaxZ = player.z + PLAYER_WIDTH / 2;
+
+            if (px + 1 > playerMinX && px < playerMaxX &&
+                py + 1 > playerMinY && py < playerMaxY &&
+                pz + 1 > playerMinZ && pz < playerMaxZ) {
+                return; // Don't place inside player
+            }
+
+            setBlock(px, py, pz, slot.type);
+            slot.count--;
+            updateInventoryUI();
+        }
+
+        // Update dropped items physics
+        function updateDroppedItems() {
+            for (let i = droppedItems.length - 1; i >= 0; i--) {
+                const item = droppedItems[i];
+                
+                // Apply gravity
+                item.vy += GRAVITY * deltaTime * 0.5;
+                item.y += item.vy * deltaTime;
+
+                // Ground collision
+                const groundY = getTerrainHeight(Math.floor(item.x), Math.floor(item.z)) + 1.2;
+                if (item.y < groundY) {
+                    item.y = groundY;
+                    item.vy = 0;
+                }
+
+                // Check pickup distance
+                const dx = item.x - player.x;
+                const dy = item.y - (player.y + PLAYER_HEIGHT / 2);
+                const dz = item.z - player.z;
+                const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+                if (dist < PICK_UP_DISTANCE) {
+                    // Add to inventory
+                    let added = false;
+                    
+                    // First try to stack with existing slot of same type
+                    for (const slot of inventory.slots) {
+                        if (slot.type === item.type && slot.count > 0) {
+                            slot.count++;
+                            added = true;
+                            break;
+                        }
+                    }
+                    
+                    // Then try empty slot
+                    if (!added) {
+                        for (const slot of inventory.slots) {
+                            if (slot.count === 0) {
+                                slot.type = item.type;
+                                slot.count = 1;
+                                added = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    // If still not added, try to add to slot with same type but 0 count
+                    if (!added) {
+                        for (const slot of inventory.slots) {
+                            if (slot.type === item.type) {
+                                slot.count++;
+                                added = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (added) {
+                        droppedItems.splice(i, 1);
+                        updateInventoryUI();
+                    }
+                }
+            }
+        }
+
+        // Collision detection
+        function checkCollision(x, y, z) {
+            const hw = PLAYER_WIDTH / 2;
+            const corners = [
+                [x - hw, y, z - hw],
+                [x + hw, y, z - hw],
+                [x - hw, y, z + hw],
+                [x + hw, y, z + hw],
+                [x - hw, y + PLAYER_HEIGHT, z - hw],
+                [x + hw, y + PLAYER_HEIGHT, z - hw],
+                [x - hw, y + PLAYER_HEIGHT, z + hw],
+                [x + hw, y + PLAYER_HEIGHT, z + hw],
+                [x - hw, y + PLAYER_HEIGHT / 2, z - hw],
+                [x + hw, y + PLAYER_HEIGHT / 2, z - hw],
+                [x - hw, y + PLAYER_HEIGHT / 2, z + hw],
+                [x + hw, y + PLAYER_HEIGHT / 2, z + hw]
+            ];
+
+            for (const [cx, cy, cz] of corners) {
+                const block = getBlock(Math.floor(cx), Math.floor(cy), Math.floor(cz));
+                if (block !== 0) return true;
+            }
+            return false;
+        }
+
+        // Update player physics
+        function updatePlayer() {
+            // Look direction
+            const forward = [
+                -Math.sin(player.yaw),
+                0,
+                -Math.cos(player.yaw)
+            ];
+            const right = [
+                Math.cos(player.yaw),
+                0,
+                -Math.sin(player.yaw)
+            ];
+
+            // Movement input
+            let moveX = 0;
+            let moveZ = 0;
+
+            if (keys['KeyW'] || keys['ArrowUp']) { moveX += forward[0]; moveZ += forward[2]; }
+            if (keys['KeyS'] || keys['ArrowDown']) { moveX -= forward[0]; moveZ -= forward[2]; }
+            if (keys['KeyA'] || keys['ArrowLeft']) { moveX -= right[0]; moveZ -= right[2]; }
+            if (keys['KeyD'] || keys['ArrowRight']) { moveX += right[0]; moveZ += right[2]; }
+
+            // Normalize horizontal movement
+            const moveLen = Math.sqrt(moveX * moveX + moveZ * moveZ);
+            if (moveLen > 0) {
+                moveX = (moveX / moveLen) * MOVE_SPEED;
+                moveZ = (moveZ / moveLen) * MOVE_SPEED;
+            }
+
+            // Apply gravity
+            player.vy += GRAVITY * deltaTime;
+
+            // Jump
+            if ((keys['Space'] || keys['KeySpace']) && player.onGround) {
+                player.vy = JUMP_FORCE;
+                player.onGround = false;
+            }
+
+            // Move with collision
+            const newX = player.x + moveX * deltaTime;
+            const newY = player.y + player.vy * deltaTime;
+            const newZ = player.z + moveZ * deltaTime;
+
+            // X movement
+            if (!checkCollision(newX, player.y, player.z)) {
+                player.x = newX;
+            }
+
+            // Z movement
+            if (!checkCollision(player.x, player.y, newZ)) {
+                player.z = newZ;
+            }
+
+            // Y movement
+            if (!checkCollision(player.x, newY, player.z)) {
+                player.y = newY;
+                player.onGround = false;
+            } else {
+                if (player.vy < 0) {
+                    player.onGround = true;
+                }
+                player.vy = 0;
+            }
+
+            // Keep player above minimum height
+            if (player.y < 1) {
+                player.y = 1;
+                player.vy = 0;
+                player.onGround = true;
+            }
+        }
+
+        // Update inventory UI
+        function updateInventoryUI() {
+            const container = document.getElementById('inventory');
+            container.innerHTML = '';
+
+            for (let i = 0; i < inventory.slots.length; i++) {
+                const slot = inventory.slots[i];
+                const div = document.createElement('div');
+                div.className = 'inv-slot' + (i === selectedSlot ? ' selected' : '');
+                div.onclick = () => { selectedSlot = i; updateInventoryUI(); };
+
+                const hotkey = document.createElement('div');
+                hotkey.className = 'hotkey';
+                hotkey.textContent = i + 1;
+                div.appendChild(hotkey);
+
+                if (slot.type !== 0) {
+                    const block = BLOCK_TYPES[slot.type];
+                    const preview = document.createElement('div');
+                    preview.className = 'block-preview';
+                    preview.style.background = block.color;
+                    div.appendChild(preview);
+
+                    if (slot.count > 0) {
+                        const count = document.createElement('div');
+                        count.className = 'count';
+                        count.textContent = slot.count;
+                        div.appendChild(count);
+                    }
+                }
+
+                container.appendChild(div);
+            }
+        }
+
+        // Load chunks around player
+        function loadChunks() {
+            const pcx = Math.floor(player.x / CHUNK_SIZE);
+            const pcz = Math.floor(player.z / CHUNK_SIZE);
+
+            for (let dx = -RENDER_DISTANCE; dx <= RENDER_DISTANCE; dx++) {
+                for (let dz = -RENDER_DISTANCE; dz <= RENDER_DISTANCE; dz++) {
+                    generateChunk(pcx + dx, pcz + dz);
+                }
+            }
+
+            // Build dirty meshes
+            let meshesBuilt = 0;
+            for (const chunk of chunks.values()) {
+                if (chunk.dirty && meshesBuilt < 2) {
+                    buildChunkMesh(chunk);
+                    meshesBuilt++;
+                }
+            }
+        }
+
+        // Main render loop
+        function render(time) {
+            if (!isPlaying) return;
+
+            requestAnimationFrame(render);
+
+            // Calculate delta time
+            deltaTime = Math.min((time - lastTime) / 1000, 0.1);
+            lastTime = time;
+
+            // FPS counter
+            frameCount++;
+            fpsTime += deltaTime;
+            if (fpsTime >= 1) {
+                document.getElementById('fps').textContent = frameCount;
+                frameCount = 0;
+                fpsTime = 0;
+            }
+
+            // Update game state
+            updatePlayer();
+            updateDroppedItems();
+            loadChunks();
+
+            // Update debug info
+            document.getElementById('pos').textContent = 
+                `${player.x.toFixed(1)}, ${player.y.toFixed(1)}, ${player.z.toFixed(1)}`;
+            document.getElementById('chunks').textContent = chunks.size;
+
+            // Resize canvas if needed
+            if (canvas.width !== canvas.clientWidth || canvas.height !== canvas.clientHeight) {
+                canvas.width = canvas.clientWidth;
+                canvas.height = canvas.clientHeight;
+                gl.viewport(0, 0, canvas.width, canvas.height);
+            }
+
+            // Clear screen
+            gl.clearColor(0.6, 0.75, 0.95, 1.0);
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+            gl.enable(gl.DEPTH_TEST);
+            gl.enable(gl.CULL_FACE);
+
+            // Set up camera matrices
+            const aspect = canvas.width / canvas.height;
+            const projection = mat4Perspective(Math.PI / 3, aspect, 0.1, 200);
+            
+            const eyeY = player.y + PLAYER_HEIGHT - 0.2;
+            const lookX = player.x - Math.sin(player.yaw) * Math.cos(player.pitch);
+            const lookY = eyeY + Math.sin(player.pitch);
+            const lookZ = player.z - Math.cos(player.yaw) * Math.cos(player.pitch);
+            
+            const view = mat4LookAt(
+                [player.x, eyeY, player.z],
+                [lookX, lookY, lookZ],
+                [0, 1, 0]
+            );
+
+            gl.uniformMatrix4fv(uProjection, false, projection);
+            gl.uniformMatrix4fv(uView, false, view);
+
+            // Render chunks
+            const pcx = Math.floor(player.x / CHUNK_SIZE);
+            const pcz = Math.floor(player.z / CHUNK_SIZE);
+
+            for (const chunk of chunks.values()) {
+                const dx = chunk.cx - pcx;
+                const dz = chunk.cz - pcz;
+                if (Math.abs(dx) <= RENDER_DISTANCE && Math.abs(dz) <= RENDER_DISTANCE) {
+                    renderChunk(chunk);
+                }
+            }
+
+            // Render dropped items
+            renderDroppedItems(view);
+        }
+
+        // Input handlers
+        function onMouseMove(e) {
+            if (!isPlaying) return;
+            
+            const sensitivity = 0.002;
+            player.yaw += e.movementX * sensitivity;
+            player.pitch -= e.movementY * sensitivity;
+            player.pitch = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, player.pitch));
+        }
+
+        function onMouseDown(e) {
+            if (!isPlaying) return;
+            
+            if (e.button === 0) breakBlock();
+            if (e.button === 2) placeBlock();
+        }
+
+        function onKeyDown(e) {
+            keys[e.code] = true;
+            
+            // Number keys for inventory
+            if (e.code >= 'Digit1' && e.code <= 'Digit9') {
+                selectedSlot = parseInt(e.code.slice(5)) - 1;
+                updateInventoryUI();
+            }
+        }
+
+        function onKeyUp(e) {
+            keys[e.code] = false;
+        }
+
+        function onWheel(e) {
+            if (!isPlaying) return;
+            
+            if (e.deltaY > 0) {
+                selectedSlot = (selectedSlot + 1) % 9;
+            } else {
+                selectedSlot = (selectedSlot + 8) % 9;
+            }
+            updateInventoryUI();
+        }
+
+        function onContextMenu(e) {
+            e.preventDefault();
+        }
+
+        // Start game
+        function startGame() {
+            document.getElementById('instructions').classList.add('hidden');
+            canvas.requestPointerLock();
+        }
+
+        document.addEventListener('pointerlockchange', () => {
+            isPlaying = document.pointerLockElement === canvas;
+            if (isPlaying) {
+                lastTime = performance.now();
+                requestAnimationFrame(render);
+            } else {
+                document.getElementById('instructions').classList.remove('hidden');
+            }
+        });
+
+        // Initialize game
+        function init() {
+            initShaders();
+            createItemMesh();
+            
+            // Find spawn position
+            player.y = getTerrainHeight(0, 0) + 3;
+            
+            // Generate initial chunks
+            loadChunks();
+            
+            // Set up event listeners
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mousedown', onMouseDown);
+            document.addEventListener('keydown', onKeyDown);
+            document.addEventListener('keyup', onKeyUp);
+            document.addEventListener('wheel', onWheel);
+            document.addEventListener('contextmenu', onContextMenu);
+            
+            updateInventoryUI();
+            
+            // Start render loop
+            lastTime = performance.now();
+            isPlaying = false;
+            requestAnimationFrame(render);
+        }
+
+        init();
+    </script>
+</body>
+</html>
+

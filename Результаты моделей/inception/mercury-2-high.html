@@ -1,0 +1,313 @@
+
+                        <!DOCTYPE html>
+                        <html lang="en">
+                        <head>
+                            <meta charset="UTF-8">
+                            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+							<style>
+								body {
+									background-color: white; /* Ensure the iframe has a white background */
+								}
+
+								
+							</style>
+                        </head>
+                        <body>
+                            <!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Voxel Sandbox</title>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+  <style>
+    body { margin:0; overflow:hidden; font-family:'Press Start 2P',sans-serif; background:#111; color:#fff; }
+    #ui { position:absolute; bottom:10px; left:50%; transform:translateX(-50%); display:flex; gap:5px; }
+    .slot { width:48px; height:48px; border:2px solid #555; background:#222; display:flex; align-items:center; justify-content:center; position:relative; cursor:pointer; }
+    .slot.active { border-color:#fff; }
+    .slot span { position:absolute; bottom:2px; right:2px; font-size:12px; color:#fff; }
+    .slot .color { width:100%; height:100%; opacity:0.8; }
+    #instructions { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); text-align:center; }
+    #instructions button { font-family:'Press Start 2P',sans-serif; padding:10px 20px; font-size:16px; }
+  </style>
+</head>
+<body>
+  <div id="instructions">
+    <p>Click “Play” to start</p>
+    <button id="startBtn">Play</button>
+  </div>
+  <div id="ui"></div>
+
+  <script type="module">
+    import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js';
+    import { PointerLockControls } from 'https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/controls/PointerLockControls.js';
+    import SimplexNoise from 'https://cdn.jsdelivr.net/npm/simplex-noise@4.0.0/simplex-noise.js';
+
+    /* ---------- CONSTANTS ---------- */
+    const BLOCK_SIZE = 1;
+    const CHUNK_SIZE = 16;
+    const GRAVITY = -0.02;
+    const PLAYER_HEIGHT = 1.8;
+    const PLAYER_RADIUS = 0.3;
+
+    /* ---------- BLOCK TYPES ---------- */
+    const BLOCK_TYPES = {
+      grass: { color: 0x00ff00 },
+      dirt:  { color: 0x8B4513 },
+      stone: { color: 0x808080 }
+    };
+
+    /* ---------- INVENTORY ---------- */
+    const inventory = { grass:0, dirt:0, stone:0 };
+    let activeBlock = 'grass';
+
+    /* ---------- SCENE SETUP ---------- */
+    const scene   = new THREE.Scene();
+    scene.background = new THREE.Color(0x87ceeb);
+    const camera  = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ antialias:true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    /* ---------- LIGHTS ---------- */
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(10,20,10);
+    scene.add(dirLight);
+    scene.add(new THREE.AmbientLight(0x404040));
+
+    /* ---------- CONTROLS ---------- */
+    const controls = new PointerLockControls(camera, document.body);
+    const raycaster = new THREE.Raycaster();
+
+    /* ---------- NOISE ---------- */
+    const simplex = new SimplexNoise();
+
+    /* ---------- BLOCK STORAGE ---------- */
+    const blocks = new Map(); // key => {mesh, type}
+    function blockKey(x,y,z){ return `${x},${y},${z}`; }
+    function addBlock(x,y,z,type){
+      const geo = new THREE.BoxGeometry(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+      const mat = new THREE.MeshLambertMaterial({color: BLOCK_TYPES[type].color});
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(x*BLOCK_SIZE, y*BLOCK_SIZE, z*BLOCK_SIZE);
+      scene.add(mesh);
+      blocks.set(blockKey(x,y,z), {mesh, type});
+    }
+    function removeBlock(x,y,z){
+      const key = blockKey(x,y,z);
+      const data = blocks.get(key);
+      if(data){
+        scene.remove(data.mesh);
+        data.mesh.geometry.dispose();
+        data.mesh.material.dispose();
+        blocks.delete(key);
+      }
+    }
+    function getBlock(x,y,z){ return blocks.get(blockKey(x,y,z)); }
+
+    /* ---------- TERRAIN ---------- */
+    function getHeight(x,z){
+      const scale = 20;
+      const h = Math.floor(simplex.noise2D(x/scale, z/scale) * 4 + 8);
+      return Math.max(1, h);
+    }
+    function generateChunk(cx, cz){
+      const startX = cx * CHUNK_SIZE;
+      const startZ = cz * CHUNK_SIZE;
+      for(let x=0;x<CHUNK_SIZE;x++){
+        for(let z=0;z<CHUNK_SIZE;z++){
+          const wx = startX + x;
+          const wz = startZ + z;
+          const h = getHeight(wx, wz);
+          for(let y=0;y<h;y++){
+            let type = 'stone';
+            if(y===h-1) type='grass';
+            else if(y>h-3) type='dirt';
+            addBlock(wx, y, wz, type);
+          }
+        }
+      }
+    }
+    const loadedChunks = new Set();
+    function loadChunksAround(px,pz){
+      const cx = Math.floor(px / (CHUNK_SIZE*BLOCK_SIZE));
+      const cz = Math.floor(pz / (CHUNK_SIZE*BLOCK_SIZE));
+      for(let dx=-1;dx<=1;dx++){
+        for(let dz=-1;dz<=1;dz++){
+          const key = `${cx+dx},${cz+dz}`;
+          if(!loadedChunks.has(key)){
+            generateChunk(cx+dx, cz+dz);
+            loadedChunks.add(key);
+          }
+        }
+      }
+    }
+
+    /* ---------- PLAYER ---------- */
+    const player = { velocity:new THREE.Vector3(), canJump:false };
+    camera.position.set(0, PLAYER_HEIGHT, 0);
+    controls.getObject().position.copy(camera.position);
+    scene.add(controls.getObject());
+
+    /* ---------- INVENTORY UI ---------- */
+    const ui = document.getElementById('ui');
+    function createInventoryUI(){
+      Object.keys(BLOCK_TYPES).forEach(type=>{
+        const slot = document.createElement('div');
+        slot.className='slot';
+        slot.dataset.type=type;
+        const col = document.createElement('div');
+        col.className='color';
+        col.style.background=`#${BLOCK_TYPES[type].color.toString(16).padStart(6,'0')}`;
+        const cnt = document.createElement('span');
+        cnt.textContent='0';
+        slot.append(col,cnt);
+        slot.addEventListener('click',()=>setActiveBlock(type));
+        ui.appendChild(slot);
+      });
+      updateActiveSlotUI();
+    }
+    function setActiveBlock(type){ activeBlock=type; updateActiveSlotUI(); }
+    function updateActiveSlotUI(){
+      document.querySelectorAll('.slot').forEach(s=>s.classList.toggle('active',s.dataset.type===activeBlock));
+    }
+    function updateInventoryUI(){
+      document.querySelectorAll('.slot').forEach(s=>{
+        const type=s.dataset.type;
+        s.querySelector('span').textContent=inventory[type];
+      });
+    }
+
+    /* ---------- ITEM DROPS ---------- */
+    const items=[]; // {mesh,velocity,type}
+    function spawnItem(x,y,z,type){
+      const geo = new THREE.BoxGeometry(0.4,0.4,0.4);
+      const mat = new THREE.MeshLambertMaterial({color: BLOCK_TYPES[type].color});
+      const mesh = new THREE.Mesh(geo,mat);
+      mesh.position.set(x*BLOCK_SIZE, y*BLOCK_SIZE+0.5, z*BLOCK_SIZE);
+      scene.add(mesh);
+      items.push({mesh,velocity:new THREE.Vector3(0,0.1,0),type});
+    }
+
+    /* ---------- INPUT ---------- */
+    const mouseDown={left:false,right:false};
+    document.addEventListener('mousedown',e=>{ if(e.button===0)mouseDown.left=true; if(e.button===2)mouseDown.right=true; });
+    document.addEventListener('mouseup',e=>{ if(e.button===0)mouseDown.left=false; if(e.button===2)mouseDown.right=false; });
+    document.body.addEventListener('contextmenu',e=>e.preventDefault());
+
+    const keys={};
+    document.addEventListener('keydown',e=>keys[e.code]=true);
+    document.addEventListener('keyup',e=>keys[e.code]=false);
+
+    /* ---------- MAIN LOOP ---------- */
+    const clock=new THREE.Clock();
+    function animate(){
+      requestAnimationFrame(animate);
+      const delta=clock.getDelta();
+      const speed=5;
+
+      // Movement
+      const dir=new THREE.Vector3();
+      if(keys['KeyW']) dir.z-=1;
+      if(keys['KeyS']) dir.z+=1;
+      if(keys['KeyA']) dir.x-=1;
+      if(keys['KeyD']) dir.x+=1;
+      dir.normalize();
+      const move=dir.clone().multiplyScalar(speed*delta);
+      const yaw=controls.getObject().rotation.y;
+      move.applyAxisAngle(new THREE.Vector3(0,1,0),yaw);
+      const newPos=controls.getObject().position.clone().add(move);
+      const footX=Math.floor(newPos.x);
+      const footY=Math.floor(newPos.y-PLAYER_HEIGHT);
+      const footZ=Math.floor(newPos.z);
+      if(!getBlock(footX,footY,footZ)){
+        controls.getObject().position.copy(newPos);
+      }
+
+      // Gravity & Jump
+      player.velocity.y+=GRAVITY;
+      controls.getObject().position.y+=player.velocity.y;
+      const groundY=Math.floor(controls.getObject().position.y-PLAYER_HEIGHT);
+      const groundBlock=getBlock(Math.floor(controls.getObject().position.x),groundY,Math.floor(controls.getObject().position.z));
+      if(groundBlock){
+        player.velocity.y=Math.max(0,player.velocity.y);
+        controls.getObject().position.y=(groundY+1)+PLAYER_HEIGHT;
+        player.canJump=true;
+      }else player.canJump=false;
+      if(keys['Space']&&player.canJump){
+        player.velocity.y=0.15;
+        player.canJump=false;
+      }
+
+      // Block interaction
+      if(mouseDown.left||mouseDown.right){
+        raycaster.setFromCamera(new THREE.Vector2(0,0),camera);
+        const intersect=raycaster.intersectObjects(Array.from(blocks.values()).map(b=>b.mesh))[0];
+        if(intersect){
+          const pos=intersect.object.position.clone().divideScalar(BLOCK_SIZE).floor();
+          if(mouseDown.left){
+            const data=getBlock(pos.x,pos.y,pos.z);
+            if(data){
+              removeBlock(pos.x,pos.y,pos.z);
+              spawnItem(pos.x,pos.y,pos.z,data.type);
+            }
+          }else if(mouseDown.right){
+            const normal=intersect.face.normal;
+            const placePos=pos.clone().add(normal);
+            const key=blockKey(placePos.x,placePos.y,placePos.z);
+            if(!blocks.has(key)&&inventory[activeBlock]>0){
+              addBlock(placePos.x,placePos.y,placePos.z,activeBlock);
+              inventory[activeBlock]--;
+              updateInventoryUI();
+            }
+          }
+        }
+        mouseDown.left=mouseDown.right=false;
+      }
+
+      // Items physics & pickup
+      items.forEach((item,i)=>{
+        item.velocity.y+=GRAVITY;
+        item.mesh.position.add(item.velocity);
+        if(item.mesh.position.y<=0.2){
+          item.mesh.position.y=0.2;
+          item.velocity.y=0;
+        }
+        if(item.mesh.position.distanceTo(controls.getObject().position)<1.5){
+          scene.remove(item.mesh);
+          inventory[item.type]=(inventory[item.type]||0)+1;
+          updateInventoryUI();
+          items.splice(i,1);
+        }
+      });
+
+      // Load new chunks
+      loadChunksAround(controls.getObject().position.x,controls.getObject().position.z);
+
+      renderer.render(scene,camera);
+    }
+
+    /* ---------- UI & START ---------- */
+    const startBtn=document.getElementById('startBtn');
+    startBtn.addEventListener('click',()=>controls.lock());
+    controls.addEventListener('lock',()=>{
+      document.getElementById('instructions').style.display='none';
+      createInventoryUI();
+      animate();
+    });
+    controls.addEventListener('unlock',()=>document.getElementById('instructions').style.display='block');
+
+    window.addEventListener('resize',()=>{
+      camera.aspect=window.innerWidth/window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth,window.innerHeight);
+    });
+  </script>
+</body>
+</html>
+
+							<script>
+                            	
+							</script>
+                        </body>
+                        </html>
+                    

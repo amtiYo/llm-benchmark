@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Voxel Sandbox</title>
+<style>
+    body{margin:0;overflow:hidden;background:#000;font-family:sans-serif}
+    #ui{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);display:flex;gap:4px;pointer-events:none}
+    .slot{width:40px;height:40px;border:2px solid #555;background:#222;display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px}
+    .active{border-color:#ff0}
+    #crosshair{position:absolute;top:50%;left:50%;margin:-6px 0 0 -6px;width:12px;height:12px;border:2px solid #fff;border-radius:50%;pointer-events:none}
+</style>
+</head>
+<body>
+<div id="ui"></div>
+<div id="crosshair"></div>
+
+<!-- всё JS-наполнение — в одном модульном скрипте -->
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.159.0/build/three.module.js';
+import { PointerLockControls } from 'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm/controls/PointerLockControls.js';
+import SimplexNoise from 'https://cdn.jsdelivr.net/npm/simplex-noise@4/dist/esm/simplex-noise.js';
+
+/* === базовая сцена === */
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87ceeb);
+
+const camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+/* свет */
+scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1));
+
+/* управление камерой */
+const controls = new PointerLockControls(camera, document.body);
+document.body.addEventListener('click', () => controls.lock());
+controls.getObject().position.set(0, 20, 0);
+scene.add(controls.getObject());
+
+/* шум для высот */
+const noise = new SimplexNoise();
+
+/* материалы */
+const materials = {
+  grass: new THREE.MeshLambertMaterial({color:0x55aa55}),
+  dirt : new THREE.MeshLambertMaterial({color:0x8b5a2b}),
+  stone: new THREE.MeshLambertMaterial({color:0x777777}),
+  drop : new THREE.MeshLambertMaterial({color:0xffff00})
+};
+
+/* === генерация чанков === */
+const CHUNK = 16, BLOCK = 1, WORLD_Y = 32;
+const chunks = new Map();
+const key = (x,z)=>`${x},${z}`;
+
+function buildChunk(cx, cz){
+  const k = key(cx, cz);
+  if (chunks.has(k)) return;
+  const g = new THREE.Group();
+
+  for(let x=0;x<CHUNK;x++){
+    for(let z=0;z<CHUNK;z++){
+      const wx = cx*CHUNK + x;
+      const wz = cz*CHUNK + z;
+
+      const h = Math.floor( (noise.noise2D(wx*0.05,wz*0.05)+1)*4
+                           + (noise.noise2D(wx*0.01,wz*0.01)+1)*8 );
+
+      for(let y=0; y<=h; y++){
+        const mat = y===h ? materials.grass : (y>h-3?materials.dirt:materials.stone);
+        const cube = new THREE.Mesh(new THREE.BoxGeometry(BLOCK,BLOCK,BLOCK), mat);
+        cube.position.set(wx*BLOCK, y*BLOCK, wz*BLOCK);
+        cube.userData = {block:true, type:mat===materials.grass?'grass':mat===materials.dirt?'dirt':'stone'};
+        g.add(cube);
+      }
+    }
+  }
+  scene.add(g);
+  chunks.set(k, g);
+}
+
+/* стартовый квадрат чанков */
+for(let i=-1;i<=1;i++)for(let j=-1;j<=1;j++)buildChunk(i,j);
+
+/* === инвентарь === */
+const inv = {grass:0,dirt:0,stone:0};
+const slots = ['grass','dirt','stone'];
+let active = 0;
+
+const ui = document.getElementById('ui');
+function drawUI(){
+  ui.innerHTML='';
+  slots.forEach((s,i)=>{
+    const d=document.createElement('div');
+    d.className='slot'+(i===active?' active':'');
+    d.textContent = inv[s];
+    ui.appendChild(d);
+  });
+}
+drawUI();
+addEventListener('wheel',e=>{
+  active = (active + (e.deltaY>0?1:-1) + slots.length) % slots.length;
+  drawUI();
+});
+
+/* === дропы === */
+const drops=[];
+function spawnDrop(type,pos){
+  const m=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.5,0.5),materials.drop);
+  m.position.copy(pos);
+  m.userData={type,vy:0};
+  scene.add(m); drops.push(m);
+}
+
+/* === инструменты для взаимодействия === */
+const ray = new THREE.Raycaster();
+
+function breakBlock(){
+  ray.setFromCamera({x:0,y:0}, camera);
+  const hit = ray.intersectObjects(scene.children,true)[0];
+  if(!hit) return;
+  const obj = hit.object;
+  if(obj.userData.block){
+    spawnDrop(obj.userData.type, obj.position);
+    obj.parent.remove(obj);
+  }
+}
+function placeBlock(){
+  const type = slots[active];
+  if(inv[type]<=0) return;
+  ray.setFromCamera({x:0,y:0}, camera);
+  const hit = ray.intersectObjects(scene.children,true)[0];
+  if(!hit) return;
+  const pos = hit.object.position.clone().add(hit.face.normal);
+  const cube = new THREE.Mesh(new THREE.BoxGeometry(BLOCK,BLOCK,BLOCK), materials[type]);
+  cube.position.copy(pos);
+  cube.userData={block:true,type};
+  scene.add(cube);
+  inv[type]--; drawUI();
+}
+
+addEventListener('mousedown',e=>{ if(e.button===0)breakBlock(); if(e.button===2)placeBlock(); });
+addEventListener('contextmenu',e=>e.preventDefault());
+
+/* === движение и коллизии === */
+const vel = new THREE.Vector3(), dir = new THREE.Vector3(), keys={};
+addEventListener('keydown',e=>keys[e.code]=true);
+addEventListener('keyup',e=>keys[e.code]=false);
+let canJump=false;
+
+function groundHeight(x,z){
+  const h = Math.floor( (noise.noise2D(x*0.05,z*0.05)+1)*4
+                       + (noise.noise2D(x*0.01,z*0.01)+1)*8 );
+  return h*BLOCK + BLOCK/2;
+}
+
+/* === игровой цикл === */
+function loop(){
+  requestAnimationFrame(loop);
+
+  /* генерация новых чанков поблизости */
+  const cx = Math.floor(controls.getObject().position.x/BLOCK/CHUNK);
+  const cz = Math.floor(controls.getObject().position.z/BLOCK/CHUNK);
+  for(let i=cx-1;i<=cx+1;i++)for(let j=cz-1;j<=cz+1;j++)buildChunk(i,j);
+
+  /* управление */
+  vel.x*=0.88; vel.z*=0.88;
+  dir.set(0,0,0);
+  if(keys['KeyW'])dir.z-=1;
+  if(keys['KeyS'])dir.z+=1;
+  if(keys['KeyA'])dir.x-=1;
+  if(keys['KeyD'])dir.x+=1;
+  dir.normalize();
+  if(dir.length()){
+    vel.x+=dir.x*0.1;
+    vel.z+=dir.z*0.1;
+  }
+  if(canJump && keys['Space']){ vel.y=0.25; canJump=false; }
+  vel.y-=0.01; // гравитация
+
+  controls.moveRight(vel.x);
+  controls.moveForward(vel.z);
+  controls.getObject().position.y += vel.y;
+
+  /* примитивная коллизия с землёй */
+  const g = groundHeight(controls.getObject().position.x, controls.getObject().position.z)+2;
+  if(controls.getObject().position.y < g){
+    vel.y=0; controls.getObject().position.y=g; canJump=true;
+  }
+
+  /* обновление дропов */
+  for(const d of drops){
+    d.userData.vy -= 0.005;
+    d.position.y += d.userData.vy;
+    const h = groundHeight(d.position.x,d.position.z)+0.25;
+    if(d.position.y < h){ d.position.y=h; d.userData.vy*=-0.3; }
+    d.rotation.y += 0.05;
+    if(d.position.distanceTo(controls.getObject().position) < 1){
+      inv[d.userData.type]++; drawUI();
+      scene.remove(d); drops.splice(drops.indexOf(d),1);
+    }
+  }
+
+  renderer.setSize(innerWidth,innerHeight);
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.render(scene,camera);
+}
+loop();
+</script>
+</body>
+</html>

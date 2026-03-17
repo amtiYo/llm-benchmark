@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Voxel Sandbox</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            display: block;
+        }
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 20px;
+            height: 20px;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+        }
+        #crosshair::before, #crosshair::after {
+            content: "";
+            position: absolute;
+            background: white;
+        }
+        #crosshair::before {
+            width: 2px;
+            height: 20px;
+            left: 9px;
+            top: 0;
+        }
+        #crosshair::after {
+            width: 20px;
+            height: 2px;
+            left: 0;
+            top: 9px;
+        }
+        #inventory {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 5px;
+            border-radius: 5px;
+        }
+        .slot {
+            width: 50px;
+            height: 50px;
+            margin: 0 5px;
+            background: rgba(255, 255, 255, 0.2);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: white;
+        }
+        .slot.active {
+            border-color: white;
+            background: rgba(255, 255, 255, 0.4);
+        }
+        .slot-count {
+            font-size: 12px;
+            margin-top: 2px;
+        }
+        #debug {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 5px;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <div id="crosshair"></div>
+    <div id="inventory"></div>
+    <div id="debug"></div>
+
+    <script>
+        // Game constants
+        const BLOCK_SIZE = 1;
+        const CHUNK_SIZE = 16;
+        const RENDER_DISTANCE = 4;
+        const GRAVITY = 0.02;
+        const JUMP_FORCE = 0.15;
+        const MOVEMENT_SPEED = 0.1;
+        const MOUSE_SENSITIVITY = 0.002;
+
+        // Block types
+        const BLOCKS = {
+            AIR: { id: 0, name: "Air", color: null },
+            GRASS: { id: 1, name: "Grass", color: [0.2, 0.8, 0.3] },
+            DIRT: { id: 2, name: "Dirt", color: [0.5, 0.3, 0.1] },
+            STONE: { id: 3, name: "Stone", color: [0.5, 0.5, 0.5] },
+            WOOD: { id: 4, name: "Wood", color: [0.4, 0.2, 0.0] },
+            LEAVES: { id: 5, name: "Leaves", color: [0.0, 0.5, 0.0] }
+        };
+
+        // Game state
+        const state = {
+            canvas: null,
+            gl: null,
+            camera: {
+                position: [0, 20, 0],
+                rotation: [0, 0, 0],
+                velocity: [0, 0, 0],
+                onGround: false
+            },
+            chunks: {},
+            inventory: {
+                items: {
+                    [BLOCKS.GRASS.id]: 10,
+                    [BLOCKS.DIRT.id]: 10,
+                    [BLOCKS.STONE.id]: 10,
+                    [BLOCKS.WOOD.id]: 10,
+                    [BLOCKS.LEAVES.id]: 10
+                },
+                selected: 1
+            },
+            drops: [],
+            mouse: {
+                locked: false,
+                x: 0,
+                y: 0
+            },
+            keys: {},
+            lastTime: 0,
+            frameCount: 0,
+            fps: 0
+        };
+
+        // Initialize the game
+        function init() {
+            state.canvas = document.getElementById('gameCanvas');
+            state.canvas.width = window.innerWidth;
+            state.canvas.height = window.innerHeight;
+
+            // Initialize WebGL
+            state.gl = state.canvas.getContext('webgl');
+            if (!state.gl) {
+                alert('WebGL not supported in your browser');
+                return;
+            }
+
+            // Compile shaders
+            const vertexShader = compileShader(state.gl.VERTEX_SHADER, `
+                attribute vec3 aPosition;
+                attribute vec3 aColor;
+                uniform mat4 uViewMatrix;
+                uniform mat4 uProjectionMatrix;
+                varying vec3 vColor;
+                void main() {
+                    gl_Position = uProjectionMatrix * uViewMatrix * vec4(aPosition, 1.0);
+                    vColor = aColor;
+                }
+            `);
+            const fragmentShader = compileShader(state.gl.FRAGMENT_SHADER, `
+                precision mediump float;
+                varying vec3 vColor;
+                void main() {
+                    gl_FragColor = vec4(vColor, 1.0);
+                }
+            `);
+
+            // Create shader program
+            state.program = state.gl.createProgram();
+            state.gl.attachShader(state.program, vertexShader);
+            state.gl.attachShader(state.program, fragmentShader);
+            state.gl.linkProgram(state.program);
+            if (!state.gl.getProgramParameter(state.program, state.gl.LINK_STATUS)) {
+                console.error('Shader program error:', state.gl.getProgramInfoLog(state.program));
+                return;
+            }
+
+            // Get attribute and uniform locations
+            state.attribLocations = {
+                position: state.gl.getAttribLocation(state.program, 'aPosition'),
+                color: state.gl.getAttribLocation(state.program, 'aColor')
+            };
+            state.uniformLocations = {
+                viewMatrix: state.gl.getUniformLocation(state.program, 'uViewMatrix'),
+                projectionMatrix: state.gl.getUniformLocation(state.program, 'uProjectionMatrix')
+            };
+
+            // Enable depth testing
+            state.gl.enable(state.gl.DEPTH_TEST);
+            state.gl.enable(state.gl.CULL_FACE);
+            state.gl.cullFace(state.gl.BACK);
+
+            // Initialize inventory UI
+            initInventory();
+
+            // Set up event listeners
+            document.addEventListener('keydown', handleKeyDown);
+            document.addEventListener('keyup', handleKeyUp);
+            document.addEventListener('mousemove', handleMouseMove);
+            document.addEventListener('mousedown', handleMouseDown);
+            state.canvas.addEventListener('click', () => {
+                state.canvas.requestPointerLock = state.canvas.requestPointerLock || 
+                                                 state.canvas.mozRequestPointerLock || 
+                                                 state.canvas.webkitRequestPointerLock;
+                state.canvas.requestPointerLock();
+            });
+            document.addEventListener('pointerlockchange', lockChangeAlert, false);
+            document.addEventListener('mozpointerlockchange', lockChangeAlert, false);
+            document.addEventListener('webkitpointerlockchange', lockChangeAlert, false);
+
+            // Start game loop
+            state.lastTime = performance.now();
+            requestAnimationFrame(gameLoop);
+        }
+
+        function compileShader(type, source) {
+            const shader = state.gl.createShader(type);
+            state.gl.shaderSource(shader, source);
+            state.gl.compileShader(shader);
+            if (!state.gl.getShaderParameter(shader, state.gl.COMPILE_STATUS)) {
+                console.error('Shader compile error:', state.gl.getShaderInfoLog(shader));
+                return null;
+            }
+            return shader;
+        }
+
+        function lockChangeAlert() {
+            if (document.pointerLockElement === state.canvas || 
+                document.mozPointerLockElement === state.canvas || 
+                document.webkitPointerLockElement === state.canvas) {
+                state.mouse.locked = true;
+            } else {
+                state.mouse.locked = false;
+            }
+        }
+
+        function handleKeyDown(e) {
+            state.keys[e.key.toLowerCase()] = true;
+        }
+
+        function handleKeyUp(e) {
+            state.keys[e.key.toLowerCase()] = false;
+        }
+
+        function handleMouseMove(e) {
+            if (!state.mouse.locked) return;
+            
+            const movementX = e.movementX || e.mozMovementX || e.webkitMovementX || 0;
+            const movementY = e.movementY || e.mozMovementY || e.webkitMovementY || 0;
+            
+            state.camera.rotation[0] -= movementY * MOUSE_S

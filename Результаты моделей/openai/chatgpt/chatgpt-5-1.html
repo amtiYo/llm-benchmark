@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8" />
+<title>Voxel Sandbox</title>
+<style>
+    html, body { margin:0; padding:0; overflow:hidden; background:#87CEEB; }
+    canvas { width:100vw; height:100vh; display:block; }
+    #inv {
+        position:fixed; bottom:10px; left:50%; transform:translateX(-50%);
+        display:flex; gap:6px; z-index:10;
+    }
+    .slot {
+        width:50px; height:50px; border:3px solid #aaa;
+        background:#2228; color:white; font-family:sans-serif;
+        display:flex; align-items:center; justify-content:center;
+        font-size:18px; position:relative;
+    }
+    .slot.active { border-color:yellow; }
+    .slot span {
+        position:absolute; bottom:2px; right:4px; font-size:14px;
+    }
+</style>
+</head>
+<body>
+
+<canvas id="gl"></canvas>
+<div id="inv"></div>
+
+<script>
+////////////////////////////////////////////////////////////////
+// SMALL UTILS
+////////////////////////////////////////////////////////////////
+const V3 = (x=0,y=0,z=0)=>({x,y,z});
+const key = {};
+document.addEventListener("keydown",e=>key[e.code]=true);
+document.addEventListener("keyup",e=>key[e.code]=false);
+
+////////////////////////////////////////////////////////////////
+// BASIC WORLD CONFIG
+////////////////////////////////////////////////////////////////
+const CHUNK = 16;
+const WORLD_HEIGHT = 32;
+
+function noise2D(x,z){
+    // Simple pseudo-noise
+    return (Math.sin(x*0.12)+Math.cos(z*0.1))*4 + (Math.sin(x*0.02)*Math.cos(z*0.02))*10;
+}
+
+////////////////////////////////////////////////////////////////
+// VOXEL WORLD DATA STRUCTURE
+////////////////////////////////////////////////////////////////
+const world = new Map(); // key = "cx,cz"
+function chunkKey(cx,cz){ return cx+","+cz; }
+
+function generateChunk(cx,cz){
+    const blocks = new Uint8Array(CHUNK*WORLD_HEIGHT*CHUNK);
+    for(let x=0;x<CHUNK;x++){
+        for(let z=0;z<CHUNK;z++){
+            const wx = cx*CHUNK + x;
+            const wz = cz*CHUNK + z;
+            const h = Math.floor( noise2D(wx,wz) + 20 );
+            for(let y=0;y<h;y++){
+                const idx = x + z*CHUNK + y*CHUNK*CHUNK;
+                blocks[idx] = 1; // dirt block
+            }
+        }
+    }
+    world.set(chunkKey(cx,cz), blocks);
+}
+
+function getBlock(wx,wy,wz){
+    if(wy<0||wy>=WORLD_HEIGHT) return 0;
+    const cx = Math.floor(wx/CHUNK);
+    const cz = Math.floor(wz/CHUNK);
+    const id = chunkKey(cx,cz);
+    if(!world.has(id)) return 0;
+    const chunk = world.get(id);
+    const x = ((wx%CHUNK)+CHUNK)%CHUNK;
+    const z = ((wz%CHUNK)+CHUNK)%CHUNK;
+    return chunk[x + z*CHUNK + wy*CHUNK*CHUNK];
+}
+
+function setBlock(wx,wy,wz,val){
+    if(wy<0||wy>=WORLD_HEIGHT) return;
+    const cx = Math.floor(wx/CHUNK);
+    const cz = Math.floor(wz/CHUNK);
+    const id = chunkKey(cx,cz);
+    if(!world.has(id)) generateChunk(cx,cz);
+    const chunk = world.get(id);
+    const x = ((wx%CHUNK)+CHUNK)%CHUNK;
+    const z = ((wz%CHUNK)+CHUNK)%CHUNK;
+    chunk[x + z*CHUNK + wy*CHUNK*CHUNK] = val;
+}
+
+////////////////////////////////////////////////////////////////
+// DROPS (LOOT ITEMS)
+////////////////////////////////////////////////////////////////
+const drops = []; // {x,y,z,vy,type}
+
+function spawnDrop(x,y,z,type){
+    drops.push({x,y,z,vy:0,type});
+}
+
+////////////////////////////////////////////////////////////////
+// INVENTORY
+////////////////////////////////////////////////////////////////
+const inventory = { 1:0 }; // type: count
+let activeSlot = 1;
+
+function updateInventoryUI(){
+    const inv = document.getElementById("inv");
+    inv.innerHTML = "";
+    [1].forEach(type=>{
+        const div = document.createElement("div");
+        div.className="slot"+(activeSlot===type?" active":"");
+        div.textContent="Dirt";
+        const c = document.createElement("span");
+        c.textContent = inventory[type];
+        div.appendChild(c);
+        div.onclick=()=>{ activeSlot=type; updateInventoryUI(); };
+        inv.appendChild(div);
+    });
+}
+updateInventoryUI();
+
+////////////////////////////////////////////////////////////////
+// PLAYER + CAMERA
+////////////////////////////////////////////////////////////////
+const player = {
+    x:0, y:40, z:0,
+    vx:0, vy:0, vz:0,
+    yaw:0, pitch:0,
+    onGround:false
+};
+
+const canvas = document.getElementById("gl");
+const gl = canvas.getContext("webgl");
+
+////////////////////////////////////////////////////////////////
+// POINTER LOCK
+////////////////////////////////////////////////////////////////
+canvas.addEventListener("click", ()=> canvas.requestPointerLock());
+document.addEventListener("mousemove", e=>{
+    if(document.pointerLockElement===canvas){
+        player.yaw -= e.movementX*0.002;
+        player.pitch -= e.movementY*0.002;
+        player.pitch = Math.max(-1.5, Math.min(1.5, player.pitch));
+    }
+});
+
+////////////////////////////////////////////////////////////////
+// WORLD RENDERING (VERY BASIC VOXEL RENDERER)
+////////////////////////////////////////////////////////////////
+// Minimal WebGL shader for cubes:
+const vsSrc = `
+attribute vec3 pos;
+attribute vec3 normal;
+uniform mat4 mvp;
+varying vec3 vN;
+void main(){
+    vN = normal;
+    gl_Position = mvp * vec4(pos,1.0);
+}`;
+const fsSrc = `
+precision mediump float;
+varying vec3 vN;
+void main(){
+    float l = dot(normalize(vN),normalize(vec3(1,1,0.5)))*0.5+0.5;
+    gl_FragColor = vec4(l*0.4+0.3, l*0.3+0.2, l*0.1, 1.0);
+}`;
+
+// Compile shader
+function makeShader(type,src){
+    const s = gl.createShader(type);
+    gl.shaderSource(s,src);
+    gl.compileShader(s);
+    return s;
+}
+const prog = gl.createProgram();
+gl.attachShader(prog, makeShader(gl.VERTEX_SHADER,vsSrc));
+gl.attachShader(prog, makeShader(gl.FRAGMENT_SHADER,fsSrc));
+gl.linkProgram(prog);
+gl.useProgram(prog);
+
+// Cube geometry (6 faces)
+const cubeVerts = new Float32Array([
+    // x,y,z, nx,ny,nz  (each face)
+    // +X
+    1,0,0, 1,0,0,   1,1,0, 1,0,0,   1,1,1, 1,0,0,
+    1,0,0, 1,0,0,   1,1,1, 1,0,0,   1,0,1, 1,0,0,
+    // -X
+    0,0,0,-1,0,0,   0,1,1,-1,0,0,   0,1,0,-1,0,0,
+    0,0,0,-1,0,0,   0,0,1,-1,0,0,   0,1,1,-1,0,0,
+    // +Y
+    0,1,0,0,1,0,    1,1,0,0,1,0,    1,1,1,0,1,0,
+    0,1,0,0,1,0,    1,1,1,0,1,0,    0,1,1,0,1,0,
+    // -Y
+    0,0,0,0,-1,0,   1,0,1,0,-1,0,   1,0,0,0,-1,0,
+    0,0,0,0,-1,0,   0,0,1,0,-1,0,   1,0,1,0,-1,0,
+    // +Z
+    0,0,1,0,0,1,    1,1,1,0,0,1,    1,0,1,0,0,1,
+    0,0,1,0,0,1,    0,1,1,0,0,1,    1,1,1,0,0,1,
+    // -Z
+    0,0,0,0,0,-1,   1,0,0,0,0,-1,   1,1,0,0,0,-1,
+    0,0,0,0,0,-1,   1,1,0,0,0,-1,   0,1,0,0,0,-1
+]);
+
+const vbo = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER,vbo);
+gl.bufferData(gl.ARRAY_BUFFER,cubeVerts,gl.STATIC_DRAW);
+
+const stride = 6*4;
+const posLoc = gl.getAttribLocation(prog,"pos");
+const nLoc   = gl.getAttribLocation(prog,"normal");
+gl.enableVertexAttribArray(posLoc);
+gl.enableVertexAttribArray(nLoc);
+gl.vertexAttribPointer(posLoc,3,gl.FLOAT,false,stride,0);
+gl.vertexAttribPointer(nLoc,3,gl.FLOAT,false,stride,3*4);
+
+const mvpLoc = gl.getUniformLocation(prog,"mvp");
+
+////////////////////////////////////////////////////////////////
+// MATRIX UTILS
+////////////////////////////////////////////////////////////////
+function matMul(a,b){
+    const r=new Float32Array(16);
+    for(let i=0;i<4;i++){
+        for(let j=0;j<4;j++){
+            r[i*4+j]=0;
+            for(let k=0;k<4;k++) r[i*4+j]+=a[i*4+k]*b[k*4+j];
+        }
+    }
+    return r;
+}
+function matIdentity(){
+    const m=new Float32Array(16);
+    for(let i=0;i<16;i++) m[i]=(i%5==0?1:0);
+    return m;
+}
+function matPerspective(fov,asp,n,f){
+    const m=new Float32Array(16);
+    const t=Math.tan(fov/2);
+    m[0]=1/(asp*t); m[5]=1/t; m[10]=(f+n)/(n-f); m[11]=-1; m[14]=(2*f*n)/(n-f);
+    return m;
+}
+function matLook(px,py,pz, yaw, pitch){
+    const cy=Math.cos(yaw), sy=Math.sin(yaw);
+    const cp=Math.cos(pitch), sp=Math.sin(pitch);
+    const fx = cy*cp, fy = -sp, fz = sy*cp;
+    const tx = px+fx, ty=py+fy, tz=pz+fz;
+
+    function lookAt(ex,ey,ez, cx,cy,cz){
+        const zx=ex-cx, zy=ey-cy, zz=ez-cz;
+        const zl = Math.hypot(zx,zy,zz);
+        const zxN=zx/zl, zyN=zy/zl, zzN=zz/zz;
+        const xx = 0*zzN - 1*zyN;
+        const xy = 1*zxN - 0*zzN;
+        const xz = 0*zyN - 0*zxN;
+        const xl = Math.hypot(xx,xy,xz)||1;
+        const xN = xx/xl, yN = xy/xl, zN = xz/xl;
+        const yx = zyN*zN - zzN*yN;
+        const yy = zzN*xN - zxN*zN;
+        const yz = zxN*yN - zyN*xN;
+
+        const m=new Float32Array(16);
+        m[0]=xN; m[1]=yx; m[2]=zxN; m[3]=0;
+        m[4]=yN; m[5]=yy; m[6]=zyN; m[7]=0;
+        m[8]=zN; m[9]=yz; m[10]=zzN; m[11]=0;
+        m[12]=-(xN*ex + yN*ey + zN*ez);
+        m[13]=-(yx*ex + yy*ey + yz*ez);
+        m[14]=-(zxN*ex + zyN*ey + zzN*ez);
+        m[15]=1;
+        return m;
+    }
+
+    return lookAt(px,py,pz,tx,ty,tz);
+}
+
+////////////////////////////////////////////////////////////////
+// PHYSICS + COLLISION
+////////////////////////////////////////////////////////////////
+function blockCollides(x,y,z){
+    return getBlock(Math.floor(x),Math.floor(y),Math.floor(z))!==0;
+}
+
+function playerPhysics(dt){
+    const speed=6;
+    const sinY=Math.sin(player.yaw), cosY=Math.cos(player.yaw);
+    let mx=0, mz=0;
+
+    if(key["KeyW"]) { mx += sinY; mz += cosY; }
+    if(key["KeyS"]) { mx -= sinY; mz -= cosY; }
+    if(key["KeyA"]) { mx -= cosY; mz += sinY; }
+    if(key["KeyD"]) { mx += cosY; mz -= sinY; }
+
+    const len=Math.hypot(mx,mz); if(len>0){ mx/=len; mz/=len; }
+
+    player.vx = mx*speed;
+    player.vz = mz*speed;
+
+    player.vy -= 20*dt; // gravity
+
+    if(player.onGround && key["Space"]){
+        player.vy = 8;
+    }
+
+    // movement with collision
+    function tryMove(axis, vel){
+        player[axis] += vel*dt;
+        // check collision (simple bounding box)
+        const px=player.x, py=player.y, pz=player.z;
+        const feet = Math.floor(py);
+        const head = Math.floor(py+1.8);
+        const bx=[-0.3,0.3];
+        const bz=[-0.3,0.3];
+
+        for(let dx of bx){
+            for(let dz of bz){
+                for(let dy of [feet,head]){
+                    if(blockCollides(px+dx, dy, pz+dz)){
+                        player[axis] -= vel*dt;
+                        if(axis==="y" && vel<0) player.onGround=true;
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    player.onGround=false;
+    tryMove("x", player.vx);
+    tryMove("y", player.vy);
+    tryMove("z", player.vz);
+}
+
+////////////////////////////////////////////////////////////////
+// RAYCAST FOR MINING / BUILDING
+////////////////////////////////////////////////////////////////
+function raycast(maxDist=5){
+    const dx=Math.sin(player.yaw)*Math.cos(player.pitch);
+    const dy=-Math.sin(player.pitch);
+    const dz=Math.cos(player.yaw)*Math.cos(player.pitch);
+    let x=player.x, y=player.y+1.6, z=player.z;
+    for(let i=0;i<maxDist*10;i++){
+        x+=dx*0.1; y+=dy*0.1; z+=dz*0.1;
+        const bx=Math.floor(x), by=Math.floor(y), bz=Math.floor(z);
+        if(getBlock(bx,by,bz)!==0) return {bx,by,bz};
+    }
+    return null;
+}
+
+////////////////////////////////////////////////////////////////
+// MOUSE ACTIONS
+////////////////////////////////////////////////////////////////
+document.addEventListener("mousedown", e=>{
+    if(e.button===0){ // break block
+        const hit = raycast();
+        if(hit){
+            setBlock(hit.bx,hit.by,hit.bz,0);
+            spawnDrop(hit.bx+0.5,hit.by+0.5,hit.bz+0.5,1);
+        }
+    }
+    if(e.button===2){ // place block
+        if(inventory[activeSlot]>0){
+            const hit=raycast();
+            if(hit){
+                const {bx,by,bz}=hit;
+                // place adjacent:
+                const px=player.x, py=player.y+1, pz=player.z;
+                const dx = Math.sign(hit.bx - Math.floor(px));
+                const dy = Math.sign(hit.by - Math.floor(py));
+                const dz = Math.sign(hit.bz - Math.floor(pz));
+                let x=hit.bx+dx, y=hit.by+dy, z=hit.bz+dz;
+                if(getBlock(x,y,z)===0){
+                    setBlock(x,y,z,activeSlot);
+                    inventory[activeSlot]--;
+                    updateInventoryUI();
+                }
+            }
+        }
+    }
+});
+
+////////////////////////////////////////////////////////////////
+// GAME LOOP
+////////////////////////////////////////////////////////////////
+let last=performance.now();
+
+function loop(t){
+    const dt=(t-last)/1000; last=t;
+
+    // generate nearby chunks
+    const pcx=Math.floor(player.x/CHUNK);
+    const pcz=Math.floor(player.z/CHUNK);
+    for(let dx=-1;dx<=1;dx++){
+        for(let dz=-1;dz<=1;dz++){
+            const k=chunkKey(pcx+dx,pcz+dz);
+            if(!world.has(k)) generateChunk(pcx+dx,pcz+dz);
+        }
+    }
+
+    // update physics
+    playerPhysics(dt);
+
+    // update drops
+    for(const d of drops){
+        d.vy -= 20*dt;
+        d.y += d.vy*dt;
+
+        // collision with ground
+        if(blockCollides(d.x, d.y, d.z)){
+            d.y = Math.floor(d.y)+1;
+            d.vy=0;
+        }
+
+        // pickup
+        const dx=d.x-player.x, dy=d.y-player.y, dz=d.z-player.z;
+        if(dx*dx+dy*dy+dz*dz < 1){
+            inventory[d.type]++;
+            updateInventoryUI();
+            d.remove=true;
+        }
+    }
+    for(let i=drops.length-1;i>=0;i--){
+        if(drops[i].remove) drops.splice(i,1);
+    }
+
+    // RENDER
+    drawWorld();
+
+    requestAnimationFrame(loop);
+}
+
+////////////////////////////////////////////////////////////////
+// RENDER WORLD (draw all visible blocks in nearby chunks)
+////////////////////////////////////////////////////////////////
+function drawWorld(){
+    gl.enable(gl.DEPTH_TEST);
+    gl.viewport(0,0,gl.canvas.width,gl.canvas.height);
+    gl.clearColor(0.5,0.7,1,1);
+    gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+
+    const asp=gl.canvas.width/gl.canvas.height;
+    const proj=matPerspective(1.0,asp,0.1,200);
+    const view=matLook(player.x,player.y+1.6,player.z,player.yaw,player.pitch);
+    const pv = matMul(proj,view);
+
+    // Render nearby chunks
+    for(let cx=pcx-1;cx<=pcx+1;cx++){
+        for(let cz=pcz-1;cz<=pcz+1;cz++){
+            const id=chunkKey(cx,cz);
+            const chunk=world.get(id);
+            if(!chunk) continue;
+
+            for(let x=0;x<CHUNK;x++){
+                for(let z=0;z<CHUNK;z++){
+                    for(let y=0;y<WORLD_HEIGHT;y++){
+                        if(chunk[x + z*CHUNK + y*CHUNK*CHUNK]!==0){
+                            const wx=cx*CHUNK+x, wy=y, wz=cz*CHUNK+z;
+                            const model=matIdentity();
+                            model[12]=wx;
+                            model[13]=wy;
+                            model[14]=wz;
+                            const mvp=matMul(pv,model);
+                            gl.uniformMatrix4fv(mvpLoc,false,mvp);
+                            gl.drawArrays(gl.TRIANGLES,0,36);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Draw drops (as cubes)
+    for(const d of drops){
+        const model=matIdentity();
+        model[12]=d.x; model[13]=d.y; model[14]=d.z;
+        const mvp=matMul(pv,model);
+        gl.uniformMatrix4fv(mvpLoc,false,mvp);
+        gl.drawArrays(gl.TRIANGLES,0,36);
+    }
+}
+
+////////////////////////////////////////////////////////////////
+// INITIALIZE + START
+////////////////////////////////////////////////////////////////
+function resize(){
+    canvas.width=innerWidth;
+    canvas.height=innerHeight;
+}
+window.onresize=resize;
+resize();
+
+requestAnimationFrame(loop);
+</script>
+
+</body>
+</html>
