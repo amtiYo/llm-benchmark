@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Browser Voxel Sandbox</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: sans-serif;
+            background: #000;
+        }
+
+        #ui {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            color: white;
+            display: flex;
+            gap: 10px;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px;
+            border-radius: 8px;
+        }
+
+        .slot {
+            border: 2px solid white;
+            padding: 10px;
+            width: 60px;
+            text-align: center;
+        }
+
+        .active {
+            border-color: yellow;
+            background: rgba(255, 255, 0, 0.2);
+        }
+
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 20px;
+            height: 20px;
+            border: 2px solid white;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+        }
+
+        #instructions {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="instructions">Click to Play. WASD: Move, Space: Jump, LMB: Mine, RMB: Place</div>
+    <div id="crosshair"></div>
+    <div id="ui">
+        <div id="slot-0" class="slot active">Dirt: 0</div>
+        <div id="slot-1" class="slot">Grass: 0</div>
+        <div id="slot-2" class="slot">Stone: 0</div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/PointerLockControls.js"></script>
+
+    <script>
+        // --- Configuration ---
+        const worldSize = 32; // Square area
+        const blockSize = 1;
+        const inventory = { "Dirt": 0, "Grass": 0, "Stone": 0 };
+        let activeBlockType = "Dirt";
+
+        // --- Setup Scene ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87ceeb);
+        scene.fog = new THREE.Fog(0x87ceeb, 10, 50);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: false });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const light = new THREE.DirectionalLight(0xffffff, 1);
+        light.position.set(10, 20, 10);
+        scene.add(light);
+        scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+
+        // --- World Data ---
+        const world = {}; // "x,y,z" -> {mesh, type}
+        const drops = []; // Array of physics items
+
+        function getBlockKey(x, y, z) { return `${x},${y},${z}`; }
+
+        // Procedural Gen
+        for (let x = -worldSize / 2; x < worldSize / 2; x++) {
+            for (let z = -worldSize / 2; z < worldSize / 2; z++) {
+                const h = Math.floor(Math.sin(x / 5) * Math.cos(z / 5) * 3);
+                for (let y = -5; y <= h; y++) {
+                    createBlock(x, y, z, y === h ? 'Grass' : 'Dirt');
+                }
+            }
+        }
+
+        function createBlock(x, y, z, type) {
+            const colors = { "Dirt": 0x8B4513, "Grass": 0x228B22, "Stone": 0x808080 };
+            const geo = new THREE.BoxGeometry(blockSize, blockSize, blockSize);
+            const mat = new THREE.MeshLambertMaterial({ color: colors[type] });
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.position.set(x, y, z);
+            scene.add(mesh);
+            world[getBlockKey(x, y, z)] = { mesh, type };
+        }
+
+        // --- Controls ---
+        const controls = new THREE.PointerLockControls(camera, document.body);
+        document.addEventListener('click', () => controls.lock());
+
+        let move = { f: false, b: false, l: false, r: false, jump: false };
+        const velocity = new THREE.Vector3();
+        const direction = new THREE.Vector3();
+
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'KeyW') move.f = true;
+            if (e.code === 'KeyS') move.b = true;
+            if (e.code === 'KeyA') move.l = true;
+            if (e.code === 'KeyD') move.r = true;
+            if (e.code === 'Space') move.jump = true;
+            if (e.code === 'Digit1') activeBlockType = "Dirt";
+            if (e.code === 'Digit2') activeBlockType = "Grass";
+            if (e.code === 'Digit3') activeBlockType = "Stone";
+            updateUI();
+        });
+        window.addEventListener('keyup', (e) => {
+            if (e.code === 'KeyW') move.f = false;
+            if (e.code === 'KeyS') move.b = false;
+            if (e.code === 'KeyA') move.l = false;
+            if (e.code === 'KeyD') move.r = false;
+            if (e.code === 'Space') move.jump = false;
+        });
+
+        // --- Interaction ---
+        const raycaster = new THREE.Raycaster();
+        window.addEventListener('mousedown', (e) => {
+            if (!controls.isLocked) return;
+            raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+            const intersects = raycaster.intersectObjects(scene.children);
+
+            if (intersects.length > 0 && intersects[0].distance < 6) {
+                const obj = intersects[0].object;
+
+                if (e.button === 0) { // Mine
+                    Object.keys(world).forEach(key => {
+                        if (world[key].mesh === obj) {
+                            spawnDrop(obj.position.x, obj.position.y + 1, obj.position.z, world[key].type);
+                            scene.remove(obj);
+                            delete world[key];
+                        }
+                    });
+                } else if (e.button === 2) { // Place
+                    const pos = intersects[0].point.add(intersects[0].face.normal);
+                    const x = Math.round(pos.x);
+                    const y = Math.round(pos.y);
+                    const z = Math.round(pos.z);
+                    if (inventory[activeBlockType] > 0) {
+                        createBlock(x, y, z, activeBlockType);
+                        inventory[activeBlockType]--;
+                        updateUI();
+                    }
+                }
+            }
+        });
+        // Prevent context menu on RMB
+        window.oncontextmenu = (e) => e.preventDefault();
+
+        // --- Drops & Physics ---
+        function spawnDrop(x, y, z, type) {
+            const geo = new THREE.BoxGeometry(0.3, 0.3, 0.3);
+            const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xffffff }));
+            mesh.position.set(x, y, z);
+            scene.add(mesh);
+            drops.push({ mesh, type, vy: 0.1 });
+        }
+
+        function updateDrops() {
+            drops.forEach((d, i) => {
+                d.vy -= 0.02; // Gravity
+                d.mesh.position.y += d.vy;
+                d.mesh.rotation.x += 0.05;
+                d.mesh.rotation.y += 0.05;
+
+                // Simple ground collision
+                if (d.mesh.position.y < -5) { d.mesh.position.y = -5; d.vy = 0; }
+
+                // Pickup
+                if (d.mesh.position.distanceTo(camera.position) < 2) {
+                    inventory[d.type]++;
+                    scene.remove(d.mesh);
+                    drops.splice(i, 1);
+                    updateUI();
+                }
+            });
+        }
+
+        function updateUI() {
+            document.querySelectorAll('.slot').forEach((s, i) => {
+                const types = ["Dirt", "Grass", "Stone"];
+                const t = types[i];
+                s.innerText = `${t}: ${inventory[t]}`;
+                s.className = `slot ${activeBlockType === t ? 'active' : ''}`;
+            });
+        }
+
+        // --- Animation Loop ---
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Physics / Movement
+            const delta = 0.1;
+            if (move.f) controls.moveForward(delta);
+            if (move.b) controls.moveForward(-delta);
+            if (move.l) controls.moveRight(-delta);
+            if (move.r) controls.moveRight(delta);
+            if (move.jump) camera.position.y += 0.1;
+
+            // Simple gravity
+            camera.position.y -= 0.05;
+            if (camera.position.y < 2) camera.position.y = 2; // Floor
+
+            updateDrops();
+            renderer.render(scene, camera);
+        }
+        animate();
+
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,1789 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Voxel Sandbox</title>
+        <style>
+            body {
+                margin: 0;
+                overflow: hidden;
+                font-family: Arial, sans-serif;
+            }
+            canvas {
+                display: block;
+            }
+            #inventory {
+                position: absolute;
+                bottom: 20px;
+                left: 50%;
+                transform: translateX(-50%);
+                display: flex;
+                gap: 5px;
+                background: rgba(0, 0, 0, 0.5);
+                padding: 5px;
+                border-radius: 5px;
+            }
+            .inventory-slot {
+                width: 40px;
+                height: 40px;
+                border: 2px solid #555;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: white;
+                font-weight: bold;
+                cursor: pointer;
+                background: rgba(0, 0, 0, 0.3);
+            }
+            .inventory-slot.active {
+                border-color: #ff0;
+            }
+            .inventory-slot.empty {
+                background: rgba(100, 100, 100, 0.3);
+            }
+            #crosshair {
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                width: 20px;
+                height: 20px;
+                margin: -10px 0 0 -10px;
+                pointer-events: none;
+            }
+            #crosshair::before,
+            #crosshair::after {
+                content: "";
+                position: absolute;
+                background: white;
+            }
+            #crosshair::before {
+                width: 20px;
+                height: 2px;
+                top: 9px;
+                left: 0;
+            }
+            #crosshair::after {
+                width: 2px;
+                height: 20px;
+                left: 9px;
+                top: 0;
+            }
+        </style>
+    </head>
+    <body>
+        <canvas id="gameCanvas"></canvas>
+        <div id="inventory"></div>
+        <div id="crosshair"></div>
+
+        <script>
+            // Game configuration
+            const config = {
+                CHUNK_SIZE: 16,
+                CHUNK_HEIGHT: 128,
+                WORLD_SIZE: 4, // Chunks in each direction from origin
+                BLOCK_TYPES: [
+                    {
+                        id: 0,
+                        name: "Air",
+                        color: [0, 0, 0, 0],
+                        transparent: true,
+                    },
+                    {
+                        id: 1,
+                        name: "Grass",
+                        color: [0.2, 0.8, 0.2],
+                        topColor: [0.3, 0.9, 0.3],
+                    },
+                    { id: 2, name: "Dirt", color: [0.6, 0.4, 0.2] },
+                    { id: 3, name: "Stone", color: [0.5, 0.5, 0.5] },
+                    { id: 4, name: "Sand", color: [0.9, 0.8, 0.5] },
+                    { id: 5, name: "Wood", color: [0.5, 0.3, 0.1] },
+                    {
+                        id: 6,
+                        name: "Leaf",
+                        color: [0.1, 0.5, 0.1],
+                        transparent: true,
+                    },
+                ],
+                INVENTORY_SIZE: 9,
+                PLAYER_HEIGHT: 1.8,
+                PLAYER_WIDTH: 0.6,
+                PLAYER_SPEED: 0.1,
+                JUMP_FORCE: 0.15,
+                GRAVITY: 0.02,
+                REACH_DISTANCE: 5,
+                DROP_LIFETIME: 20000, // 20 seconds
+            };
+
+            // Game state
+            const state = {
+                world: {},
+                chunks: {},
+                player: {
+                    position: [0, 100, 0],
+                    velocity: [0, 0, 0],
+                    rotation: [0, 0],
+                    onGround: false,
+                    inventory: Array(config.INVENTORY_SIZE)
+                        .fill()
+                        .map(() => ({ type: 0, count: 0 })),
+                    selectedSlot: 0,
+                },
+                drops: [],
+                lastTime: 0,
+                keys: {},
+                mouse: {
+                    x: 0,
+                    y: 0,
+                    lastX: 0,
+                    lastY: 0,
+                    movementX: 0,
+                    movementY: 0,
+                },
+                pointerLocked: false,
+            };
+
+            // WebGL setup
+            const canvas = document.getElementById("gameCanvas");
+            const gl = canvas.getContext("webgl", { antialias: false });
+            if (!gl) {
+                alert("WebGL not supported in your browser!");
+                throw new Error("WebGL not supported");
+            }
+
+            // Resize canvas
+            function resizeCanvas() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+                gl.viewport(0, 0, canvas.width, canvas.height);
+            }
+            window.addEventListener("resize", resizeCanvas);
+            resizeCanvas();
+
+            // Shader programs
+            const shaderPrograms = {};
+
+            function createShaderProgram(
+                vertexShaderSource,
+                fragmentShaderSource,
+            ) {
+                const vertexShader = gl.createShader(gl.VERTEX_SHADER);
+                gl.shaderSource(vertexShader, vertexShaderSource);
+                gl.compileShader(vertexShader);
+
+                const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+                gl.shaderSource(fragmentShader, fragmentShaderSource);
+                gl.compileShader(fragmentShader);
+
+                const program = gl.createProgram();
+                gl.attachShader(program, vertexShader);
+                gl.attachShader(program, fragmentShader);
+                gl.linkProgram(program);
+
+                return program;
+            }
+
+            // Block shader
+            const blockVertexShader = `
+            attribute vec3 aPosition;
+            attribute vec3 aColor;
+            attribute vec3 aTopColor;
+            attribute float aHasTopColor;
+            attribute vec3 aNormal;
+
+            uniform mat4 uModelViewMatrix;
+            uniform mat4 uProjectionMatrix;
+            uniform vec3 uLightDirection;
+
+            varying vec3 vColor;
+            varying float vLighting;
+
+            void main() {
+                gl_Position = uProjectionMatrix * uModelViewMatrix * vec4(aPosition, 1.0);
+
+                // Calculate lighting
+                vec3 normal = normalize(aNormal);
+                float diffuse = max(dot(normal, uLightDirection), 0.2);
+                vLighting = diffuse;
+
+                // Mix colors based on top color
+                if (aHasTopColor > 0.5) {
+                    vColor = mix(aColor, aTopColor, abs(normal.y));
+                } else {
+                    vColor = aColor;
+                }
+            }
+        `;
+
+            const blockFragmentShader = `
+            precision mediump float;
+
+            varying vec3 vColor;
+            varying float vLighting;
+
+            void main() {
+                gl_FragColor = vec4(vColor * vLighting, 1.0);
+            }
+        `;
+
+            shaderPrograms.block = createShaderProgram(
+                blockVertexShader,
+                blockFragmentShader,
+            );
+
+            // Drop shader (simple colored)
+            const dropVertexShader = `
+            attribute vec3 aPosition;
+            attribute vec3 aColor;
+
+            uniform mat4 uModelViewMatrix;
+            uniform mat4 uProjectionMatrix;
+
+            varying vec3 vColor;
+
+            void main() {
+                gl_Position = uProjectionMatrix * uModelViewMatrix * vec4(aPosition, 1.0);
+                vColor = aColor;
+            }
+        `;
+
+            const dropFragmentShader = `
+            precision mediump float;
+
+            varying vec3 vColor;
+
+            void main() {
+                gl_FragColor = vec4(vColor, 1.0);
+            }
+        `;
+
+            shaderPrograms.drop = createShaderProgram(
+                dropVertexShader,
+                dropFragmentShader,
+            );
+
+            // Utility functions
+            function getBlockType(id) {
+                return (
+                    config.BLOCK_TYPES.find((type) => type.id === id) ||
+                    config.BLOCK_TYPES[0]
+                );
+            }
+
+            function distanceSquared(a, b) {
+                const dx = a[0] - b[0];
+                const dy = a[1] - b[1];
+                const dz = a[2] - b[2];
+                return dx * dx + dy * dy + dz * dz;
+            }
+
+            // World generation
+            function generateChunk(chunkX, chunkZ) {
+                const chunk = {
+                    x: chunkX,
+                    z: chunkZ,
+                    blocks: new Uint8Array(
+                        config.CHUNK_SIZE *
+                            config.CHUNK_HEIGHT *
+                            config.CHUNK_SIZE,
+                    ),
+                    mesh: null,
+                    dirty: true,
+                };
+
+                // Fill with air first
+                chunk.blocks.fill(0);
+
+                // Generate terrain
+                for (let x = 0; x < config.CHUNK_SIZE; x++) {
+                    for (let z = 0; z < config.CHUNK_SIZE; z++) {
+                        // Calculate world position
+                        const worldX = chunkX * config.CHUNK_SIZE + x;
+                        const worldZ = chunkZ * config.CHUNK_SIZE + z;
+
+                        // Simple noise-based height
+                        const height = Math.floor(
+                            50 +
+                                10 *
+                                    Math.sin(worldX * 0.1) *
+                                    Math.cos(worldZ * 0.1) +
+                                5 *
+                                    Math.sin(worldX * 0.05) *
+                                    Math.cos(worldZ * 0.05),
+                        );
+
+                        // Generate columns
+                        for (let y = 0; y < config.CHUNK_HEIGHT; y++) {
+                            const index =
+                                x * config.CHUNK_HEIGHT * config.CHUNK_SIZE +
+                                y * config.CHUNK_SIZE +
+                                z;
+
+                            if (y <= height) {
+                                if (y === height) {
+                                    chunk.blocks[index] = 1; // Grass
+                                } else if (y > height - 4) {
+                                    chunk.blocks[index] = 2; // Dirt
+                                } else {
+                                    chunk.blocks[index] = 3; // Stone
+                                }
+                            }
+                        }
+
+                        // Add some trees occasionally
+                        if (Math.random() < 0.01 && height > 5) {
+                            // Trunk
+                            for (let y = 1; y <= 5; y++) {
+                                const index =
+                                    x *
+                                        config.CHUNK_HEIGHT *
+                                        config.CHUNK_SIZE +
+                                    (height - y) * config.CHUNK_SIZE +
+                                    z;
+                                if (height - y >= 0) {
+                                    chunk.blocks[index] = 5; // Wood
+                                }
+                            }
+
+                            // Leaves
+                            for (let leafX = -2; leafX <= 2; leafX++) {
+                                for (let leafY = 3; leafY <= 6; leafY++) {
+                                    for (let leafZ = -2; leafZ <= 2; leafZ++) {
+                                        if (
+                                            Math.abs(leafX) +
+                                                Math.abs(leafY) +
+                                                Math.abs(leafZ) <
+                                            4
+                                        ) {
+                                            const wx = x + leafX;
+                                            const wy = height - leafY;
+                                            const wz = z + leafZ;
+
+                                            if (
+                                                wx >= 0 &&
+                                                wx < config.CHUNK_SIZE &&
+                                                wy >= 0 &&
+                                                wy < config.CHUNK_HEIGHT &&
+                                                wz >= 0 &&
+                                                wz < config.CHUNK_SIZE
+                                            ) {
+                                                const index =
+                                                    wx *
+                                                        config.CHUNK_HEIGHT *
+                                                        config.CHUNK_SIZE +
+                                                    wy * config.CHUNK_SIZE +
+                                                    wz;
+                                                if (chunk.blocks[index] === 0) {
+                                                    chunk.blocks[index] = 6; // Leaf
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                return chunk;
+            }
+
+            function getChunkForBlock(x, y, z) {
+                const chunkX = Math.floor(x / config.CHUNK_SIZE);
+                const chunkZ = Math.floor(z / config.CHUNK_SIZE);
+                const chunkKey = `${chunkX},${chunkZ}`;
+
+                if (!state.chunks[chunkKey]) {
+                    state.chunks[chunkKey] = generateChunk(chunkX, chunkZ);
+                }
+
+                return state.chunks[chunkKey];
+            }
+
+            function getBlock(x, y, z) {
+                if (y < 0 || y >= config.CHUNK_HEIGHT) return 0;
+
+                const chunk = getChunkForBlock(x, y, z);
+                const localX = x % config.CHUNK_SIZE;
+                const localZ = z % config.CHUNK_SIZE;
+
+                if (localX < 0) localX += config.CHUNK_SIZE;
+                if (localZ < 0) localZ += config.CHUNK_SIZE;
+
+                const index =
+                    localX * config.CHUNK_HEIGHT * config.CHUNK_SIZE +
+                    y * config.CHUNK_SIZE +
+                    localZ;
+                return chunk.blocks[index];
+            }
+
+            function setBlock(x, y, z, type) {
+                if (y < 0 || y >= config.CHUNK_HEIGHT) return;
+
+                const chunk = getChunkForBlock(x, y, z);
+                const localX = x % config.CHUNK_SIZE;
+                const localZ = z % config.CHUNK_SIZE;
+
+                if (localX < 0) localX += config.CHUNK_SIZE;
+                if (localZ < 0) localZ += config.CHUNK_SIZE;
+
+                const index =
+                    localX * config.CHUNK_HEIGHT * config.CHUNK_SIZE +
+                    y * config.CHUNK_SIZE +
+                    localZ;
+                chunk.blocks[index] = type;
+                chunk.dirty = true;
+
+                // Mark neighboring chunks as dirty too (for mesh regeneration)
+                const chunkX = Math.floor(x / config.CHUNK_SIZE);
+                const chunkZ = Math.floor(z / config.CHUNK_SIZE);
+
+                for (let dx = -1; dx <= 1; dx++) {
+                    for (let dz = -1; dz <= 1; dz++) {
+                        const neighborChunk =
+                            state.chunks[`${chunkX + dx},${chunkZ + dz}`];
+                        if (neighborChunk) {
+                            neighborChunk.dirty = true;
+                        }
+                    }
+                }
+            }
+
+            // Chunk meshing
+            function generateChunkMesh(chunk) {
+                const vertices = [];
+                const colors = [];
+                const topColors = [];
+                const hasTopColors = [];
+                const normals = [];
+                const indices = [];
+
+                const chunkX = chunk.x * config.CHUNK_SIZE;
+                const chunkZ = chunk.z * config.CHUNK_SIZE;
+
+                for (let x = 0; x < config.CHUNK_SIZE; x++) {
+                    for (let y = 0; y < config.CHUNK_HEIGHT; y++) {
+                        for (let z = 0; z < config.CHUNK_SIZE; z++) {
+                            const blockType =
+                                chunk.blocks[
+                                    x *
+                                        config.CHUNK_HEIGHT *
+                                        config.CHUNK_SIZE +
+                                        y * config.CHUNK_SIZE +
+                                        z
+                                ];
+                            if (blockType === 0) continue;
+
+                            const worldX = chunkX + x;
+                            const worldY = y;
+                            const worldZ = chunkZ + z;
+
+                            const type = getBlockType(blockType);
+                            const color = type.color;
+                            const topColor = type.topColor || color;
+                            const isTransparent = type.transparent || false;
+
+                            // Check all 6 faces
+                            for (let face = 0; face < 6; face++) {
+                                let neighborX = worldX;
+                                let neighborY = worldY;
+                                let neighborZ = worldZ;
+
+                                // Determine neighbor position based on face
+                                switch (face) {
+                                    case 0:
+                                        neighborY--;
+                                        break; // Bottom
+                                    case 1:
+                                        neighborY++;
+                                        break; // Top
+                                    case 2:
+                                        neighborZ--;
+                                        break; // Front
+                                    case 3:
+                                        neighborZ++;
+                                        break; // Back
+                                    case 4:
+                                        neighborX--;
+                                        break; // Left
+                                    case 5:
+                                        neighborX++;
+                                        break; // Right
+                                }
+
+                                // Skip if neighbor is solid (unless current block is transparent)
+                                const neighborBlock = getBlock(
+                                    neighborX,
+                                    neighborY,
+                                    neighborZ,
+                                );
+                                const neighborType =
+                                    getBlockType(neighborBlock);
+
+                                if (
+                                    neighborBlock !== 0 &&
+                                    !isTransparent &&
+                                    !neighborType.transparent
+                                ) {
+                                    continue;
+                                }
+
+                                // Add face vertices
+                                const baseIndex = vertices.length / 3;
+
+                                // Define face vertices (6 vertices for 2 triangles)
+                                const v = [];
+
+                                switch (face) {
+                                    case 0: // Bottom
+                                        v.push(
+                                            x,
+                                            y,
+                                            z,
+                                            x + 1,
+                                            y,
+                                            z,
+                                            x + 1,
+                                            y,
+                                            z + 1,
+                                            x,
+                                            y,
+                                            z,
+                                            x + 1,
+                                            y,
+                                            z + 1,
+                                            x,
+                                            y,
+                                            z + 1,
+                                        );
+                                        normals.push(
+                                            0,
+                                            -1,
+                                            0,
+                                            0,
+                                            -1,
+                                            0,
+                                            0,
+                                            -1,
+                                            0,
+                                            0,
+                                            -1,
+                                            0,
+                                            0,
+                                            -1,
+                                            0,
+                                            0,
+                                            -1,
+                                            0,
+                                        );
+                                        break;
+                                    case 1: // Top
+                                        v.push(
+                                            x,
+                                            y + 1,
+                                            z + 1,
+                                            x + 1,
+                                            y + 1,
+                                            z + 1,
+                                            x + 1,
+                                            y + 1,
+                                            z,
+                                            x,
+                                            y + 1,
+                                            z + 1,
+                                            x + 1,
+                                            y + 1,
+                                            z,
+                                            x,
+                                            y + 1,
+                                            z,
+                                        );
+                                        normals.push(
+                                            0,
+                                            1,
+                                            0,
+                                            0,
+                                            1,
+                                            0,
+                                            0,
+                                            1,
+                                            0,
+                                            0,
+                                            1,
+                                            0,
+                                            0,
+                                            1,
+                                            0,
+                                            0,
+                                            1,
+                                            0,
+                                        );
+                                        break;
+                                    case 2: // Front
+                                        v.push(
+                                            x + 1,
+                                            y,
+                                            z,
+                                            x,
+                                            y,
+                                            z,
+                                            x,
+                                            y + 1,
+                                            z,
+                                            x + 1,
+                                            y,
+                                            z,
+                                            x,
+                                            y + 1,
+                                            z,
+                                            x + 1,
+                                            y + 1,
+                                            z,
+                                        );
+                                        normals.push(
+                                            0,
+                                            0,
+                                            -1,
+                                            0,
+                                            0,
+                                            -1,
+                                            0,
+                                            0,
+                                            -1,
+                                            0,
+                                            0,
+                                            -1,
+                                            0,
+                                            0,
+                                            -1,
+                                            0,
+                                            0,
+                                            -1,
+                                        );
+                                        break;
+                                    case 3: // Back
+                                        v.push(
+                                            x,
+                                            y,
+                                            z + 1,
+                                            x + 1,
+                                            y,
+                                            z + 1,
+                                            x + 1,
+                                            y + 1,
+                                            z + 1,
+                                            x,
+                                            y,
+                                            z + 1,
+                                            x + 1,
+                                            y + 1,
+                                            z + 1,
+                                            x,
+                                            y + 1,
+                                            z + 1,
+                                        );
+                                        normals.push(
+                                            0,
+                                            0,
+                                            1,
+                                            0,
+                                            0,
+                                            1,
+                                            0,
+                                            0,
+                                            1,
+                                            0,
+                                            0,
+                                            1,
+                                            0,
+                                            0,
+                                            1,
+                                            0,
+                                            0,
+                                            1,
+                                        );
+                                        break;
+                                    case 4: // Left
+                                        v.push(
+                                            x,
+                                            y,
+                                            z + 1,
+                                            x,
+                                            y,
+                                            z,
+                                            x,
+                                            y + 1,
+                                            z,
+                                            x,
+                                            y,
+                                            z + 1,
+                                            x,
+                                            y + 1,
+                                            z,
+                                            x,
+                                            y + 1,
+                                            z + 1,
+                                        );
+                                        normals.push(
+                                            -1,
+                                            0,
+                                            0,
+                                            -1,
+                                            0,
+                                            0,
+                                            -1,
+                                            0,
+                                            0,
+                                            -1,
+                                            0,
+                                            0,
+                                            -1,
+                                            0,
+                                            0,
+                                            -1,
+                                            0,
+                                            0,
+                                        );
+                                        break;
+                                    case 5: // Right
+                                        v.push(
+                                            x + 1,
+                                            y,
+                                            z,
+                                            x + 1,
+                                            y,
+                                            z + 1,
+                                            x + 1,
+                                            y + 1,
+                                            z + 1,
+                                            x + 1,
+                                            y,
+                                            z,
+                                            x + 1,
+                                            y + 1,
+                                            z + 1,
+                                            x + 1,
+                                            y + 1,
+                                            z,
+                                        );
+                                        normals.push(
+                                            1,
+                                            0,
+                                            0,
+                                            1,
+                                            0,
+                                            0,
+                                            1,
+                                            0,
+                                            0,
+                                            1,
+                                            0,
+                                            0,
+                                            1,
+                                            0,
+                                            0,
+                                            1,
+                                            0,
+                                            0,
+                                        );
+                                        break;
+                                }
+
+                                vertices.push(...v);
+
+                                // Add colors
+                                for (let i = 0; i < 6; i++) {
+                                    colors.push(...color);
+                                    topColors.push(...topColor);
+                                    hasTopColors.push(type.topColor ? 1 : 0);
+                                }
+
+                                // Add indices
+                                indices.push(
+                                    baseIndex,
+                                    baseIndex + 1,
+                                    baseIndex + 2,
+                                    baseIndex + 3,
+                                    baseIndex + 4,
+                                    baseIndex + 5,
+                                );
+                            }
+                        }
+                    }
+                }
+
+                if (vertices.length === 0) {
+                    return null;
+                }
+
+                // Create buffers
+                const vertexBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+                gl.bufferData(
+                    gl.ARRAY_BUFFER,
+                    new Float32Array(vertices),
+                    gl.STATIC_DRAW,
+                );
+
+                const colorBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+                gl.bufferData(
+                    gl.ARRAY_BUFFER,
+                    new Float32Array(colors),
+                    gl.STATIC_DRAW,
+                );
+
+                const topColorBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, topColorBuffer);
+                gl.bufferData(
+                    gl.ARRAY_BUFFER,
+                    new Float32Array(topColors),
+                    gl.STATIC_DRAW,
+                );
+
+                const hasTopColorBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, hasTopColorBuffer);
+                gl.bufferData(
+                    gl.ARRAY_BUFFER,
+                    new Float32Array(hasTopColors),
+                    gl.STATIC_DRAW,
+                );
+
+                const normalBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
+                gl.bufferData(
+                    gl.ARRAY_BUFFER,
+                    new Float32Array(normals),
+                    gl.STATIC_DRAW,
+                );
+
+                const indexBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
+                gl.bufferData(
+                    gl.ELEMENT_ARRAY_BUFFER,
+                    new Uint16Array(indices),
+                    gl.STATIC_DRAW,
+                );
+
+                return {
+                    vertexBuffer,
+                    colorBuffer,
+                    topColorBuffer,
+                    hasTopColorBuffer,
+                    normalBuffer,
+                    indexBuffer,
+                    vertexCount: indices.length,
+                };
+            }
+
+            // Drop system
+            function createDrop(x, y, z, type) {
+                return {
+                    position: [x + 0.5, y + 0.5, z + 0.5],
+                    velocity: [0, 0, 0],
+                    type: type,
+                    rotation: [
+                        Math.random() * Math.PI * 2,
+                        Math.random() * Math.PI * 2,
+                    ],
+                    angularVelocity: [
+                        Math.random() * 0.1 - 0.05,
+                        Math.random() * 0.1 - 0.05,
+                    ],
+                    lifetime: config.DROP_LIFETIME,
+                    age: 0,
+                };
+            }
+
+            function updateDrops(deltaTime) {
+                const playerPos = state.player.position;
+                const newDrops = [];
+
+                for (const drop of state.drops) {
+                    drop.age += deltaTime;
+
+                    // Apply gravity
+                    drop.velocity[1] -= config.GRAVITY * deltaTime;
+
+                    // Update position
+                    drop.position[0] += drop.velocity[0] * deltaTime;
+                    drop.position[1] += drop.velocity[1] * deltaTime;
+                    drop.position[2] += drop.velocity[2] * deltaTime;
+
+                    // Update rotation
+                    drop.rotation[0] += drop.angularVelocity[0] * deltaTime;
+                    drop.rotation[1] += drop.angularVelocity[1] * deltaTime;
+
+                    // Check for collision with ground
+                    const blockBelow = getBlock(
+                        Math.floor(drop.position[0]),
+                        Math.floor(drop.position[1] - 0.5),
+                        Math.floor(drop.position[2]),
+                    );
+
+                    if (blockBelow !== 0 && drop.velocity[1] < 0) {
+                        drop.position[1] =
+                            Math.floor(drop.position[1] - 0.5) + 1.5;
+                        drop.velocity[1] = -drop.velocity[1] * 0.5;
+                    }
+
+                    // Check for pickup
+                    const distSq = distanceSquared(playerPos, drop.position);
+                    if (distSq < 2 * 2) {
+                        // 2 units radius
+                        // Add to inventory
+                        const blockType = getBlockType(drop.type);
+                        if (blockType.id !== 0) {
+                            addToInventory(drop.type, 1);
+                        }
+                        continue; // Don't keep this drop
+                    }
+
+                    // Check lifetime
+                    if (drop.age < config.DROP_LIFETIME) {
+                        newDrops.push(drop);
+                    }
+                }
+
+                state.drops = newDrops;
+            }
+
+            // Inventory system
+            function addToInventory(type, count) {
+                // First try to add to existing stack
+                for (let i = 0; i < state.player.inventory.length; i++) {
+                    if (state.player.inventory[i].type === type) {
+                        state.player.inventory[i].count += count;
+                        updateInventoryUI();
+                        return;
+                    }
+                }
+
+                // Then try to find empty slot
+                for (let i = 0; i < state.player.inventory.length; i++) {
+                    if (state.player.inventory[i].type === 0) {
+                        state.player.inventory[i] = { type, count };
+                        updateInventoryUI();
+                        return;
+                    }
+                }
+            }
+
+            function removeFromInventory(type, count) {
+                for (let i = 0; i < state.player.inventory.length; i++) {
+                    if (state.player.inventory[i].type === type) {
+                        if (state.player.inventory[i].count >= count) {
+                            state.player.inventory[i].count -= count;
+                            if (state.player.inventory[i].count === 0) {
+                                state.player.inventory[i].type = 0;
+                            }
+                            updateInventoryUI();
+                            return true;
+                        } else {
+                            // Not enough items
+                            return false;
+                        }
+                    }
+                }
+                return false;
+            }
+
+            function updateInventoryUI() {
+                const inventoryElement = document.getElementById("inventory");
+                inventoryElement.innerHTML = "";
+
+                state.player.inventory.forEach((slot, index) => {
+                    const slotElement = document.createElement("div");
+                    slotElement.className = `inventory-slot ${slot.type === 0 ? "empty" : ""} ${index === state.player.selectedSlot ? "active" : ""}`;
+
+                    if (slot.type !== 0) {
+                        const blockType = getBlockType(slot.type);
+                        slotElement.style.backgroundColor = `rgb(${blockType.color[0] * 255}, ${blockType.color[1] * 255}, ${blockType.color[2] * 255})`;
+                        slotElement.textContent =
+                            slot.count > 1 ? slot.count : "";
+                    }
+
+                    slotElement.addEventListener("click", () => {
+                        state.player.selectedSlot = index;
+                        updateInventoryUI();
+                    });
+
+                    inventoryElement.appendChild(slotElement);
+                });
+            }
+
+            // Player movement
+            function updatePlayer(deltaTime) {
+                const player = state.player;
+                const [x, y, z] = player.position;
+                const [vx, vy, vz] = player.velocity;
+
+                // Reset horizontal velocity
+                player.velocity[0] = 0;
+                player.velocity[2] = 0;
+
+                // Apply gravity
+                if (!player.onGround) {
+                    player.velocity[1] -= config.GRAVITY * deltaTime;
+                }
+
+                // Handle input
+                const moveSpeed = config.PLAYER_SPEED * deltaTime;
+                const [rotX, rotY] = player.rotation;
+
+                if (state.keys["KeyW"]) {
+                    player.velocity[0] -= Math.sin(rotX) * moveSpeed;
+                    player.velocity[2] -= Math.cos(rotX) * moveSpeed;
+                }
+                if (state.keys["KeyS"]) {
+                    player.velocity[0] += Math.sin(rotX) * moveSpeed;
+                    player.velocity[2] += Math.cos(rotX) * moveSpeed;
+                }
+                if (state.keys["KeyA"]) {
+                    player.velocity[0] -= Math.cos(rotX) * moveSpeed;
+                    player.velocity[2] += Math.sin(rotX) * moveSpeed;
+                }
+                if (state.keys["KeyD"]) {
+                    player.velocity[0] += Math.cos(rotX) * moveSpeed;
+                    player.velocity[2] -= Math.sin(rotX) * moveSpeed;
+                }
+                if (state.keys["Space"] && player.onGround) {
+                    player.velocity[1] = config.JUMP_FORCE;
+                    player.onGround = false;
+                }
+
+                // Check for collisions
+                const newX = x + player.velocity[0];
+                const newY = y + player.velocity[1];
+                const newZ = z + player.velocity[2];
+
+                // Check X collision
+                let finalX = newX;
+                const playerHalfWidth = config.PLAYER_WIDTH / 2;
+
+                if (player.velocity[0] > 0) {
+                    // Moving right
+                    if (
+                        isBlockSolid(
+                            Math.floor(newX + playerHalfWidth),
+                            Math.floor(y),
+                            Math.floor(z - playerHalfWidth),
+                        ) ||
+                        isBlockSolid(
+                            Math.floor(newX + playerHalfWidth),
+                            Math.floor(y),
+                            Math.floor(z + playerHalfWidth),
+                        ) ||
+                        isBlockSolid(
+                            Math.floor(newX + playerHalfWidth),
+                            Math.floor(y + config.PLAYER_HEIGHT),
+                            Math.floor(z - playerHalfWidth),
+                        ) ||
+                        isBlockSolid(
+                            Math.floor(newX + playerHalfWidth),
+                            Math.floor(y + config.PLAYER_HEIGHT),
+                            Math.floor(z + playerHalfWidth),
+                        )
+                    ) {
+                        finalX =
+                            Math.floor(newX + playerHalfWidth) -
+                            playerHalfWidth -
+                            0.01;
+                        player.velocity[0] = 0;
+                    }
+                } else if (player.velocity[0] < 0) {
+                    // Moving left
+                    if (
+                        isBlockSolid(
+                            Math.floor(newX - playerHalfWidth),
+                            Math.floor(y),
+                            Math.floor(z - playerHalfWidth),
+                        ) ||
+                        isBlockSolid(
+                            Math.floor(newX - playerHalfWidth),
+                            Math.floor(y),
+                            Math.floor(z + playerHalfWidth),
+                        ) ||
+                        isBlockSolid(
+                            Math.floor(newX - playerHalfWidth),
+                            Math.floor(y + config.PLAYER_HEIGHT),
+                            Math.floor(z - playerHalfWidth),
+                        ) ||
+                        isBlockSolid(
+                            Math.floor(newX - playerHalfWidth),
+                            Math.floor(y + config.PLAYER_HEIGHT),
+                            Math.floor(z + playerHalfWidth),
+                        )
+                    ) {
+                        finalX =
+                            Math.floor(newX - playerHalfWidth) +
+                            playerHalfWidth +
+                            1 +
+                            0.01;
+                        player.velocity[0] = 0;
+                    }
+                }
+
+                // Check Y collision
+                let finalY = newY;
+                if (player.velocity[1] < 0) {
+                    // Falling
+                    if (
+                        isBlockSolid(
+                            Math.floor(newX - playerHalfWidth),
+                            Math.floor(newY),
+                            Math.floor(z - playerHalfWidth),
+                        ) ||
+                        isBlockSolid(
+                            Math.floor(newX - playerHalfWidth),
+                            Math.floor(newY),
+                            Math.floor(z + playerHalfWidth),
+                        ) ||
+                        isBlockSolid(
+                            Math.floor(newX + playerHalfWidth),
+                            Math.floor(newY),
+                            Math.floor(z - playerHalfWidth),
+                        ) ||
+                        isBlockSolid(
+                            Math.floor(newX + playerHalfWidth),
+                            Math.floor(newY),
+                            Math.floor(z + playerHalfWidth),
+                        )
+                    ) {
+                        finalY = Math.floor(newY) + 1;
+                        player.velocity[1] = 0;
+                        player.onGround = true;
+                    } else {
+                        player.onGround = false;
+                    }
+                } else if (player.velocity[1] > 0) {
+                    // Jumping
+                    if (
+                        isBlockSolid(
+                            Math.floor(newX - playerHalfWidth),
+                            Math.floor(newY + config.PLAYER_HEIGHT),
+                            Math.floor(z - playerHalfWidth),
+                        ) ||
+                        isBlockSolid(
+                            Math.floor(newX - playerHalfWidth),
+                            Math.floor(newY + config.PLAYER_HEIGHT),
+                            Math.floor(z + playerHalfWidth),
+                        ) ||
+                        isBlockSolid(
+                            Math.floor(newX + playerHalfWidth),
+                            Math.floor(newY + config.PLAYER_HEIGHT),
+                            Math.floor(z - playerHalfWidth),
+                        ) ||
+                        isBlockSolid(
+                            Math.floor(newX + playerHalfWidth),
+                            Math.floor(newY + config.PLAYER_HEIGHT),
+                            Math.floor(z + playerHalfWidth),
+                        )
+                    ) {
+                        finalY =
+                            Math.floor(newY + config.PLAYER_HEIGHT) -
+                            config.PLAYER_HEIGHT -
+                            0.01;
+                        player.velocity[1] = 0;
+                    }
+                }
+
+                // Check Z collision
+                let finalZ = newZ;
+                if (player.velocity[2] > 0) {
+                    // Moving forward
+                    if (
+                        isBlockSolid(
+                            Math.floor(newX - playerHalfWidth),
+                            Math.floor(y),
+                            Math.floor(newZ + playerHalfWidth),
+                        ) ||
+                        isBlockSolid(
+                            Math.floor(newX + playerHalfWidth),
+                            Math.floor(y),
+                            Math.floor(newZ + playerHalfWidth),
+                        ) ||
+                        isBlockSolid(
+                            Math.floor(newX - playerHalfWidth),
+                            Math.floor(y + config.PLAYER_HEIGHT),
+                            Math.floor(newZ + playerHalfWidth),
+                        ) ||
+                        isBlockSolid(
+                            Math.floor(newX + playerHalfWidth),
+                            Math.floor(y + config.PLAYER_HEIGHT),
+                            Math.floor(newZ + playerHalfWidth),
+                        )
+                    ) {
+                        finalZ =
+                            Math.floor(newZ + playerHalfWidth) -
+                            playerHalfWidth -
+                            0.01;
+                        player.velocity[2] = 0;
+                    }
+                } else if (player.velocity[2] < 0) {
+                    // Moving backward
+                    if (
+                        isBlockSolid(
+                            Math.floor(newX - playerHalfWidth),
+                            Math.floor(y),
+                            Math.floor(newZ - playerHalfWidth),
+                        ) ||
+                        isBlockSolid(
+                            Math.floor(newX + playerHalfWidth),
+                            Math.floor(y),
+                            Math.floor(newZ - playerHalfWidth),
+                        ) ||
+                        isBlockSolid(
+                            Math.floor(newX - playerHalfWidth),
+                            Math.floor(y + config.PLAYER_HEIGHT),
+                            Math.floor(newZ - playerHalfWidth),
+                        ) ||
+                        isBlockSolid(
+                            Math.floor(newX + playerHalfWidth),
+                            Math.floor(y + config.PLAYER_HEIGHT),
+                            Math.floor(newZ - playerHalfWidth),
+                        )
+                    ) {
+                        finalZ =
+                            Math.floor(newZ - playerHalfWidth) +
+                            playerHalfWidth +
+                            1 +
+                            0.01;
+                        player.velocity[2] = 0;
+                    }
+                }
+
+                player.position = [finalX, finalY, finalZ];
+            }
+
+            function isBlockSolid(x, y, z) {
+                if (y < 0 || y >= config.CHUNK_HEIGHT) return true;
+                const blockType = getBlockType(getBlock(x, y, z));
+                return blockType.id !== 0 && !blockType.transparent;
+            }
+
+            // Block interaction
+            function getBlockAtCursor() {
+                const [x, y, z] = state.player.position;
+                const [rotX, rotY] = state.player.rotation;
+
+                for (let i = 0; i < config.REACH_DISTANCE * 10; i++) {
+                    const step = i / 10;
+                    const checkX = x + Math.sin(rotX) * Math.cos(rotY) * step;
+                    const checkY = y + Math.sin(rotY) * step + 1.5; // Start from eye level
+                    const checkZ = z + Math.cos(rotX) * Math.cos(rotY) * step;
+
+                    const blockX = Math.floor(checkX);
+                    const blockY = Math.floor(checkY);
+                    const blockZ = Math.floor(checkZ);
+
+                    const blockType = getBlockType(
+                        getBlock(blockX, blockY, blockZ),
+                    );
+                    if (blockType.id !== 0) {
+                        return {
+                            x: blockX,
+                            y: blockY,
+                            z: blockZ,
+                            face: getBlockFace(
+                                checkX,
+                                checkY,
+                                checkZ,
+                                blockX,
+                                blockY,
+                                blockZ,
+                            ),
+                        };
+                    }
+                }
+
+                return null;
+            }
+
+            function getBlockFace(
+                checkX,
+                checkY,
+                checkZ,
+                blockX,
+                blockY,
+                blockZ,
+            ) {
+                const dx = checkX - blockX;
+                const dy = checkY - blockY;
+                const dz = checkZ - blockZ;
+
+                const max = Math.max(dx, dy, dz);
+                if (max === dx) return 5; // Right
+                if (max === -dx) return 4; // Left
+                if (max === dy) return 1; // Top
+                if (max === -dy) return 0; // Bottom
+                if (max === dz) return 3; // Back
+                return 2; // Front
+            }
+
+            // Rendering
+            function render() {
+                const now = performance.now();
+                const deltaTime = now - state.lastTime;
+                state.lastTime = now;
+
+                // Clear screen
+                gl.clearColor(0.5, 0.7, 1.0, 1.0);
+                gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+                gl.enable(gl.DEPTH_TEST);
+                gl.enable(gl.CULL_FACE);
+
+                // Update game state
+                updatePlayer(deltaTime);
+                updateDrops(deltaTime);
+
+                // Generate meshes for dirty chunks
+                for (const key in state.chunks) {
+                    const chunk = state.chunks[key];
+                    if (chunk.dirty) {
+                        chunk.mesh = generateChunkMesh(chunk);
+                        chunk.dirty = false;
+                    }
+                }
+
+                // Setup camera
+                const [playerX, playerY, playerZ] = state.player.position;
+                const [rotX, rotY] = state.player.rotation;
+
+                const projectionMatrix = mat4.create();
+                mat4.perspective(
+                    projectionMatrix,
+                    (70 * Math.PI) / 180,
+                    canvas.width / canvas.height,
+                    0.1,
+                    1000,
+                );
+
+                const viewMatrix = mat4.create();
+                mat4.translate(viewMatrix, viewMatrix, [0, 0, 0]);
+                mat4.rotateX(viewMatrix, viewMatrix, rotY);
+                mat4.rotateY(viewMatrix, viewMatrix, rotX);
+                mat4.translate(viewMatrix, viewMatrix, [
+                    -playerX,
+                    -playerY,
+                    -playerZ,
+                ]);
+
+                // Render chunks
+                gl.useProgram(shaderPrograms.block);
+
+                const uProjectionMatrix = gl.getUniformLocation(
+                    shaderPrograms.block,
+                    "uProjectionMatrix",
+                );
+                const uModelViewMatrix = gl.getUniformLocation(
+                    shaderPrograms.block,
+                    "uModelViewMatrix",
+                );
+                const uLightDirection = gl.getUniformLocation(
+                    shaderPrograms.block,
+                    "uLightDirection",
+                );
+
+                gl.uniformMatrix4fv(uProjectionMatrix, false, projectionMatrix);
+                gl.uniform3fv(uLightDirection, [0.5, 1, 0.8]);
+
+                const aPosition = gl.getAttribLocation(
+                    shaderPrograms.block,
+                    "aPosition",
+                );
+                const aColor = gl.getAttribLocation(
+                    shaderPrograms.block,
+                    "aColor",
+                );
+                const aTopColor = gl.getAttribLocation(
+                    shaderPrograms.block,
+                    "aTopColor",
+                );
+                const aHasTopColor = gl.getAttribLocation(
+                    shaderPrograms.block,
+                    "aHasTopColor",
+                );
+                const aNormal = gl.getAttribLocation(
+                    shaderPrograms.block,
+                    "aNormal",
+                );
+
+                for (const key in state.chunks) {
+                    const chunk = state.chunks[key];
+                    if (!chunk.mesh) continue;
+
+                    const modelMatrix = mat4.create();
+                    mat4.translate(modelMatrix, modelMatrix, [
+                        chunk.x * config.CHUNK_SIZE,
+                        0,
+                        chunk.z * config.CHUNK_SIZE,
+                    ]);
+
+                    const modelViewMatrix = mat4.create();
+                    mat4.multiply(modelViewMatrix, viewMatrix, modelMatrix);
+
+                    gl.uniformMatrix4fv(
+                        uModelViewMatrix,
+                        false,
+                        modelViewMatrix,
+                    );
+
+                    // Bind buffers
+                    gl.bindBuffer(gl.ARRAY_BUFFER, chunk.mesh.vertexBuffer);
+                    gl.vertexAttribPointer(aPosition, 3, gl.FLOAT, false, 0, 0);
+                    gl.enableVertexAttribArray(aPosition);
+
+                    gl.bindBuffer(gl.ARRAY_BUFFER, chunk.mesh.colorBuffer);
+                    gl.vertexAttribPointer(aColor, 3, gl.FLOAT, false, 0, 0);
+                    gl.enableVertexAttribArray(aColor);
+
+                    gl.bindBuffer(gl.ARRAY_BUFFER, chunk.mesh.topColorBuffer);
+                    gl.vertexAttribPointer(aTopColor, 3, gl.FLOAT, false, 0, 0);
+                    gl.enableVertexAttribArray(aTopColor);
+
+                    gl.bindBuffer(
+                        gl.ARRAY_BUFFER,
+                        chunk.mesh.hasTopColorBuffer,
+                    );
+                    gl.vertexAttribPointer(
+                        aHasTopColor,
+                        1,
+                        gl.FLOAT,
+                        false,
+                        0,
+                        0,
+                    );
+                    gl.enableVertexAttribArray(aHasTopColor);
+
+                    gl.bindBuffer(gl.ARRAY_BUFFER, chunk.mesh.normalBuffer);
+                    gl.vertexAttribPointer(aNormal, 3, gl.FLOAT, false, 0, 0);
+                    gl.enableVertexAttribArray(aNormal);
+
+                    gl.bindBuffer(
+                        gl.ELEMENT_ARRAY_BUFFER,
+                        chunk.mesh.indexBuffer,
+                    );
+
+                    // Draw
+                    gl.drawElements(
+                        gl.TRIANGLES,
+                        chunk.mesh.vertexCount,
+                        gl.UNSIGNED_SHORT,
+                        0,
+                    );
+                }
+
+                // Render drops
+                gl.useProgram(shaderPrograms.drop);
+
+                const dropUProjectionMatrix = gl.getUniformLocation(
+                    shaderPrograms.drop,
+                    "uProjectionMatrix",
+                );
+                const dropUModelViewMatrix = gl.getUniformLocation(
+                    shaderPrograms.drop,
+                    "uModelViewMatrix",
+                );
+
+                gl.uniformMatrix4fv(
+                    dropUProjectionMatrix,
+                    false,
+                    projectionMatrix,
+                );
+
+                const dropAPosition = gl.getAttribLocation(
+                    shaderPrograms.drop,
+                    "aPosition",
+                );
+                const dropAColor = gl.getAttribLocation(
+                    shaderPrograms.drop,
+                    "aColor",
+                );
+
+                // Create a simple cube mesh for drops
+                const dropVertices = new Float32Array([
+                    // Front face
+                    -0.2, -0.2, 0.2, 0.2, -0.2, 0.2, 0.2, 0.2, 0.2, -0.2, 0.2,
+                    0.2,
+
+                    // Back face
+                    -0.2, -0.2, -0.2, -0.2, 0.2, -0.2, 0.2, 0.2, -0.2, 0.2,
+                    -0.2, -0.2,
+
+                    // Top face
+                    -0.2, 0.2, -0.2, -0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2,
+                    -0.2,
+
+                    // Bottom face
+                    -0.2, -0.2, -0.2, 0.2, -0.2, -0.2, 0.2, -0.2, 0.2, -0.2,
+                    -0.2, 0.2,
+
+                    // Right face
+                    0.2, -0.2, -0.2, 0.2, 0.2, -0.2, 0.2, 0.2, 0.2, 0.2, -0.2,
+                    0.2,
+
+                    // Left face
+                    -0.2, -0.2, -0.2, -0.2, -0.2, 0.2, -0.2, 0.2, 0.2, -0.2,
+                    0.2, -0.2,
+                ]);
+
+                const dropIndices = new Uint16Array([
+                    0,
+                    1,
+                    2,
+                    0,
+                    2,
+                    3, // front
+                    4,
+                    5,
+                    6,
+                    4,
+                    6,
+                    7, // back
+                    8,
+                    9,
+                    10,
+                    8,
+                    10,
+                    11, // top
+                    12,
+                    13,
+                    14,
+                    12,
+                    14,
+                    15, // bottom
+                    16,
+                    17,
+                    18,
+                    16,
+                    18,
+                    19, // right
+                    20,
+                    21,
+                    22,
+                    20,
+                    22,
+                    23, // left
+                ]);
+
+                const dropVertexBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, dropVertexBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, dropVertices, gl.STATIC_DRAW);
+
+                const dropIndexBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, dropIndexBuffer);
+                gl.bufferData(
+                    gl.ELEMENT_ARRAY_BUFFER,
+                    dropIndices,
+                    gl.STATIC_DRAW,
+                );
+
+                for (const drop of state.drops) {
+                    const modelMatrix = mat4.create();
+                    mat4.translate(modelMatrix, modelMatrix, drop.position);
+                    mat4.rotateX(modelMatrix, modelMatrix, drop.rotation[0]);
+                    mat4.rotateY(modelMatrix, modelMatrix, drop.rotation[1]);
+
+                    const modelViewMatrix = mat4.create();
+                    mat4.multiply(modelViewMatrix, viewMatrix, modelMatrix);
+
+                    gl.uniformMatrix4fv(
+                        dropUModelViewMatrix,
+                        false,
+                        modelViewMatrix,
+                    );
+
+                    const blockType = getBlockType(drop.type);
+                    const colorBuffer = gl.createBuffer();
+                    gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+
+                    const colors = new Float32Array(dropVertices.length);
+                    for (let i = 0; i < colors.length / 3; i++) {
+                        colors[i * 3] = blockType.color[0];
+                        colors[i * 3 + 1] = blockType.color[1];
+                        colors[i * 3 + 2] = blockType.color[2];
+                    }
+                    gl.bufferData(gl.ARRAY_BUFFER, colors, gl.STATIC_DRAW);
+
+                    gl.bindBuffer(gl.ARRAY_BUFFER, dropVertexBuffer);
+                    gl.vertexAttribPointer(
+                        dropAPosition,
+                        3,
+                        gl.FLOAT,
+                        false,
+                        0,
+                        0,
+                    );
+                    gl.enableVertexAttribArray(dropAPosition);
+
+                    gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+                    gl.vertexAttribPointer(
+                        dropAColor,
+                        3,
+                        gl.FLOAT,
+                        false,
+                        0,
+                        0,
+                    );
+                    gl.enableVertexAttribArray(dropAColor);
+
+                    gl.drawElements(
+                        gl.TRIANGLES,
+                        dropIndices.length,
+                        gl.UNSIGNED_SHORT,
+                        0,
+                    );
+                }
+
+                // Request next frame
+                requestAnimationFrame(render);
+            }
+
+            // Input handling
+            document.addEventListener("keydown", (e) => {
+                state.keys[e.code] = true;
+
+                // Handle inventory slot selection (1-9)
+                if (e.code >= "Digit1" && e.code <= "Digit9") {
+                    const slot = parseInt(e.code[5]) - 1;
+                    if (slot >= 0 && slot < config.INVENTORY_SIZE) {
+                        state.player.selectedSlot = slot;
+                        updateInventoryUI();
+                    }
+                }
+            });
+
+            document.addEventListener("keyup", (e) => {
+                state.keys[e.code] = false;
+            });
+
+            canvas.addEventListener("mousedown", (e) => {
+                if (!state.pointerLocked) return;
+
+                if (e.button === 0) {
+                    // Left click - break block
+                    const block = getBlockAtCursor();
+                    if (block) {
+                        const blockType = getBlockType(
+                            getBlock(block.x, block.y, block.z),
+                        );
+                        if (blockType.id !== 0) {
+                            setBlock(block.x, block.y, block.z, 0);
+                            state.drops.push(
+                                createDrop(
+                                    block.x,
+                                    block.y,
+                                    block.z,
+                                    blockType.id,
+                                ),
+                            );
+                        }
+                    }
+                } else if (e.button === 2) {
+                    // Right click - place block
+                    const block = getBlockAtCursor();
+                    if (block) {
+                        let placeX = block.x;
+                        let placeY = block.y;
+                        let placeZ = block.z;
+
+                        // Move to adjacent block based on face
+                        switch (block.face) {
+                            case 0:
+                                placeY--;
+                                break; // Bottom
+                            case 1:
+                                placeY++;
+                                break; // Top
+                            case 2:
+                                placeZ--;
+                                break; // Front
+                            case 3:
+                                placeZ++;
+                                break; // Back
+                            case 4:
+                                placeX--;
+                                break; // Left
+                            case 5:
+                                placeX++;
+                                break; // Right
+                        }
+
+                        const selectedSlot =
+                            state.player.inventory[state.player.selectedSlot];
+                        if (selectedSlot.type !== 0) {
+                            if (removeFromInventory(selectedSlot.type, 1)) {
+                                setBlock(
+                                    placeX,
+                                    placeY,
+                                    placeZ,
+                                    selectedSlot.type,
+                                );
+                            }
+                        }
+                    }
+                }
+            });
+
+            document.addEventListener("pointerlockchange", () => {
+                state.pointerLocked = document.pointerLockElement === canvas;
+            });
+
+            canvas.addEventListener("click", () => {
+                if (!state.pointerLocked) {
+                    canvas.requestPointerLock();
+                }
+            });
+
+            document.addEventListener("mousemove", (e) => {
+                if (!state.pointerLocked) return;
+
+                state.mouse.movementX =
+                    e.movementX || e.mozMovementX || e.webkitMovementX || 0;
+                state.mouse.movementY =
+                    e.movementY || e.mozMovementY || e.webkitMovementY || 0;
+
+                const sensitivity = 0.002;
+                state.player.rotation[0] -= state.mouse.movementX * sensitivity;
+                state.player.rotation[1] -= state.mouse.movementY * sensitivity;
+
+                // Limit vertical rotation
+                state.player.rotation[1] = Math.max(
+                    -Math.PI / 2,
+                    Math.min(Math.PI / 2, state.player.rotation[1]),
+                );
+            });
+
+            // Prevent context menu on right click
+            canvas.addEventListener("contextmenu", (e) => {
+                e.preventDefault();
+            });
+
+            // Initialize game
+            function init() {
+                // Generate initial world
+                for (let x = -config.WORLD_SIZE; x < config.WORLD_SIZE; x++) {
+                    for (
+                        let z = -config.WORLD_SIZE;
+                        z < config.WORLD_SIZE;
+                        z++
+                    ) {
+                        state.chunks[`${x},${z}`] = generateChunk(x, z);
+                    }
+                }
+
+                // Initialize inventory
+                updateInventoryUI();
+
+                // Start game loop
+                state.lastTime = performance.now();
+                requestAnimationFrame(render);
+            }
+
+            // Initialize the game
+            init();
+        </script>
+    </body>
+</html>

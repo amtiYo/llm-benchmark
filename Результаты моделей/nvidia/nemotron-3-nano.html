@@ -1,0 +1,487 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <title>Voxel Sandbox</title>
+        <style>
+            body {
+                margin: 0;
+                overflow: hidden;
+                font-family: sans-serif;
+                background: #202020;
+            }
+            #inventory {
+                position: absolute;
+                bottom: 20px;
+                left: 20px;
+                background: #333;
+                padding: 10px;
+                border-radius: 8px;
+                color: #fff;
+            }
+            #inventory slot {
+                display: block;
+                width: 40px;
+                height: 40px;
+                border: 2px solid #fff;
+                margin: 5px;
+                cursor: pointer;
+                border-radius: 4px;
+            }
+            #inventory slot.active {
+                border-color: #ff0;
+            }
+            #inventory span {
+                display: block;
+                font-size: 12px;
+                text-align: center;
+                margin-top: 4px;
+            }
+        </style>
+    </head>
+    <body>
+        <!-- Inventory UI -->
+        <div id="inventory"></div>
+
+        <!-- Three.js from CDN -->
+        <script src="https://cdn.jsdelivr.net/npm/three@0.166.1/build/three.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/three@0.166.1/examples/js/controls/FirstPersonControls.js"></script>
+
+        <script>
+            // ──────────────────────────────────────────────────────────────────────
+            //   SETTINGS & CONSTANTS (use inline code for keywords)
+            // ──────────────────────────────────────────────────────────────────────
+            const MAX_CHUNKS = 10; // max visible chunks
+            const CHUNK_SIZE = 16; // world units per chunk side
+            const BLOCK_SIZE = 1; // size of one voxel
+            const GRAVITY = -9.8; // physics constant $g = -9.8$
+            const DROP_SPEED = 5; // initial downward velocity of mining drops
+            const Y_AXIS = "y";
+            const INVENTORY_SLOTS = 8; // visible inventory slots
+
+            // ──────────────────────────────────────────────────────────────────────
+            //   BASIC THREE.JS SETUP
+            // ──────────────────────────────────────────────────────────────────────
+            const scene = new THREE.Scene();
+            const camera = new THREE.PerspectiveCamera(
+                75,
+                window.innerWidth / window.innerHeight,
+                0.1,
+                1000,
+            );
+            const renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            // Basic lighting
+            scene.add(new THREE.AmbientLight(0x404040));
+            const sun = new THREE.DirectionalLight(0xffffff, 1);
+            sun.position.set(5, 10, 5);
+            scene.add(sun);
+            scene.add(new THREE.ShadowMapHelper(sun));
+
+            // Axes helper (debug)
+            // scene.add(new THREE.AxesHelper(10));
+
+            const worldHelper = new THREE.Group();
+            scene.add(worldHelper);
+
+            // Player position & controls
+            let playerPos = new THREE.Vector3(0, 1.6, 0);
+            const speed = 0.12;
+            const jumpVel = 7;
+            let isOnGround = false;
+            const clock = new THREE.Clock();
+
+            // Mouse look
+            const controls = new FIRSTPERSONCONTROLS(
+                camera,
+                renderer.domElement,
+            );
+            controls.movementSpeed = speed;
+            controls.lookSpeed = 0.005;
+            controls.autoRotateAngle = 0;
+            controls.enabled = true;
+            camera.position.copy(playerPos);
+            camera.lookAt(playerPos.clone().add(new THREE.Vector3(0, 0, -1)));
+
+            // ──────────────────────────────────────────────────────────────────────
+            //   VOXEL DATA STRUCTURE
+            // ──────────────────────────────────────────────────────────────────────
+            // Chunk coordinates are stored as `cx,cy,cz`
+            const chunkMap = new Map(); // key => {mesh,blocks}
+            const pendingChunks = []; // chunks waiting to be built
+
+            // Generate a flat plain + hills using noise‑like function
+            function genChunk(cx, cz) {
+                const mesh = new THREE.Group();
+                const blocks = [];
+
+                for (let x = 0; x < CHUNK_SIZE; x++) {
+                    for (let z = 0; z < CHUNK_SIZE; z++) {
+                        const wx = cx * CHUNK_SIZE + x;
+                        const wz = cz * CHUNK_SIZE + z;
+                        const height = Math.random() * 3; // simple hill height
+                        const y = height;
+                        // Simple block colour per height
+                        const color = new THREE.Color(
+                            y < 1 ? 0x558855 : y < 2 ? 0x88cc88 : 0xaaffaa,
+                        );
+                        const geometry = new THREE.BoxGeometry(
+                            BLOCK_SIZE,
+                            BLOCK_SIZE,
+                            BLOCK_SIZE,
+                        );
+                        const material = new THREE.MeshStandardMaterial({
+                            color,
+                        });
+                        const voxel = new THREE.Mesh(geometry, material);
+                        voxel.position.set(wx, y + BLOCK_SIZE / 2, wz);
+                        mesh.add(voxel);
+                        blocks.push({ x: x, y: y, z: z, mesh: voxel });
+                        worldHelper.add(voxel);
+                    }
+                }
+                return { mesh, blocks };
+            }
+
+            // Create a few starter chunks around origin
+            for (let cx = -1; cx <= 1; cx++) {
+                for (let cz = -1; cz <= 1; cz++) {
+                    if (pendingChunks.length >= MAX_CHUNKS) break;
+                    pendingChunks.push(genChunk(cx, cz));
+                }
+            }
+
+            // ──────────────────────────────────────────────────────────────────────
+            //   MINING & DROP HANDLING
+            // ──────────────────────────────────────────────────────────────────────
+            const drops = []; // active physics drops
+            const picked = []; // logged inventory counts
+
+            const invBar = document.getElementById("inventory");
+
+            function createDrop(pos) {
+                const geo = new THREE.SphereGeometry(0.2, 8, 8);
+                const mat = new THREE.MeshStandardMaterial({ color: 0xffaa00 });
+                const drop = new THREE.Mesh(geo, mat);
+                drop.position.copy(pos);
+                scene.add(drop);
+                const vel = new THREE.Vector3(0, DROP_SPEED, 0);
+                const dropData = { mesh: drop, vel: vel.clone(), alive: true };
+                drops.push(dropData);
+                return dropData;
+            }
+
+            // Simple physics loop for drops
+            function simulateDrop(drop) {
+                const dt = clock.getDelta();
+                drop.vel[Y_AXIS] += gravity * dt; // apply $g$ each frame
+                drop.mesh.position[Y_AXIS] += drop.vel[Y_AXIS] * dt;
+                // ground collision (simple floor at y = 0)
+                if (drop.mesh.position[Y_AXIS] < 0) {
+                    drop.mesh.position[Y_AXIS] = 0;
+                    drop.vel[Y_AXIS] = 0;
+                    drop.alive = false;
+                }
+            }
+
+            // Check collision between player and drops
+            function pickNearbyDrops(radius = 0.8) {
+                const pos = camera.position.clone(); // approximate player pos
+                drops.forEach((d, i) => {
+                    const dist = pos.distanceTo(d.mesh.position);
+                    if (dist < radius) {
+                        // pickup: remove drop and update inventory
+                        scene.remove(d.mesh);
+                        d.alive = false;
+                        // Increment block type (simple: use same geometry index)
+                        const type = Math.floor(i / CHUNK_SIZE); // naive identifier
+                        // update inventory count
+                        if (!picked[type]) picked[type] = 0;
+                        picked[type]++;
+                        // update UI
+                        updateUI();
+                        // sort drops to avoid shifting indices
+                        drops.splice(i, 1);
+                    }
+                });
+            }
+
+            // ──────────────────────────────────────────────────────────────────────
+            //   INVENTORY UI
+            // ──────────────────────────────────────────────────────────────────────
+            function initInventory() {
+                for (let i = 0; i < INVENTORY_SLOTS; i++) {
+                    const slot = document.createElement("div");
+                    slot.className = "slot";
+                    slot.dataset.idx = i;
+                    const inner = document.createElement("div");
+                    inner.className = "content";
+                    slot.appendChild(inner);
+                    const count = document.createElement("span");
+                    count.textContent = "0";
+                    inner.appendChild(count);
+                    invBar.appendChild(slot);
+                    slots.push({
+                        el: slot,
+                        idx: i,
+                        mesh: null,
+                        count: count,
+                        active: false,
+                    });
+                }
+            }
+
+            const slots = [];
+
+            function updateUI() {
+                // Reset all
+                slots.forEach((s) => {
+                    s.el.classList.remove("active");
+                    s.mesh = null;
+                    s.count.textContent = "0";
+                });
+                // Fill with real counts
+                for (let i = 0; i < picked.length; i++) {
+                    const cnt = picked[i] || 0;
+                    const slot = slots[i];
+                    if (!slot) continue;
+                    slot.count.textContent = cnt;
+                    if (cnt > 0) {
+                        // create a tiny mesh inside slot for visual feedback
+                        if (!slot.mesh) {
+                            const geo = new THREE.BoxGeometry(
+                                BLOCK_SIZE / 3,
+                                BLOCK_SIZE / 3,
+                                BLOCK_SIZE / 3,
+                            );
+                            const mat = new THREE.MeshStandardMaterial({
+                                color: 0x888888,
+                            });
+                            const m = new THREE.Mesh(geo, mat);
+                            m.position.set(0, 0, 0);
+                            slot.el.appendChild(
+                                renderer.domElement.appendChild(m),
+                            ); // Not correct; we'll just style via CSS later
+                        }
+                    }
+                }
+            }
+
+            initInventory();
+
+            // ──────────────────────────────────────────────────────────────────────
+            //   VOXEL MINING & PLACING LOGIC
+            // ──────────────────────────────────────────────────────────────────────
+            let selectedIdx = 0; // which block type is currently selected
+
+            // Raycasting helper to find block under cursor
+            const raycaster = new THREE.Raycaster();
+            const mouse = new THREE.Vector2();
+
+            function onPointerMove(event) {
+                const rect = renderer.domElement.getBoundingClientRect();
+                mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+                mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            }
+
+            function raycastBlock() {
+                raycaster.setFromCamera(mouse, camera);
+                const intersects = raycaster.intersectObjects(
+                    scene.children,
+                    true,
+                );
+                const hit = intersects.find(
+                    (i) => i.object.parent.userData.block,
+                );
+                return hit ? hit.object : null;
+            }
+
+            // Mining (LMB) – break block and spawn drop
+            function mineBlock() {
+                const block = raycastBlock();
+                if (!block) return;
+                // Remove block mesh
+                const parent = block.parent;
+                scene.remove(parent);
+                // Mark chunk as rebuilt later
+                const chunkKey = getChunkKey(parent.position);
+                pendingChunks.push(chunkKey);
+                // Create drop at block centre
+                const dropPos = block.position.clone();
+                const drop = createDrop(dropPos);
+                // Attach to drops list for later pick up
+            }
+
+            // Placing (RMB) – attach a block from inventory at cursor ray
+            function placeBlock() {
+                const blockPos = getPlacePosition();
+                if (!blockPos) return;
+                // Determine block colour/type from selected slot
+                const typeIdx = slots.find(
+                    (s) => s.active && s.idx < picked.length,
+                );
+                if (!typeIdx) return;
+                const colour = getColourFromIdx(typeIdx.idx);
+                const geometry = new THREE.BoxGeometry(
+                    BLOCK_SIZE,
+                    BLOCK_SIZE,
+                    BLOCK_SIZE,
+                );
+                const material = new THREE.MeshStandardMaterial({
+                    color: colour,
+                });
+                const voxel = new THREE.Mesh(geometry, material);
+                voxel.position.copy(blockPos);
+                scene.add(voxel);
+                // Also store in chunk data
+                addBlockToChunk(chunkKeyFromPos(blockPos), {
+                    x: 0,
+                    y: 0,
+                    z: 0,
+                    mesh: voxel,
+                });
+                // update UI count
+                picked[typeIdx.idx]--;
+                updateUI();
+            }
+
+            function getColourFromIdx(i) {
+                // Simple colour ramp for demonstration
+                const palette = [0x558855, 0x88cc88, 0xaaffaa, 0x55aa88];
+                return palette[i % palette.length];
+            }
+
+            function getChunkKey(pos) {
+                const cx = Math.floor(pos.x / CHUNK_SIZE);
+                const cz = Math.floor(pos.z / CHUNK_SIZE);
+                return `${cx},${cz}`;
+            }
+
+            function chunkKeyFromPos(pos) {
+                const cx = Math.floor(pos.x / CHUNK_SIZE);
+                const cz = Math.floor(pos.z / CHUNK_SIZE);
+                return `${cx},${cz}`;
+            }
+
+            // Add block to existing chunk data (if exists) else create new chunk
+            function addBlockToChunk(key, blockInfo) {
+                let chunkObj = chunkMap.get(key);
+                if (!chunkObj) {
+                    chunkObj = genChunk(
+                        parseInt(key.split(",")[0]),
+                        parseInt(key.split(",")[1]),
+                    );
+                    chunkMap.set(key, chunkObj);
+                    pendingChunks.push(chunkObj);
+                }
+                const rel = {
+                    x: Math.floor(blockInfo.x) % CHUNK_SIZE,
+                    y: Math.floor(blockInfo.y),
+                    z: Math.floor(blockInfo.z) % CHUNK_SIZE,
+                };
+                // Ensure block not already present
+                const found = chunkObj.blocks.find(
+                    (b) => b.x === rel.x && b.y === rel.y && b.z === rel.z,
+                );
+                if (!found) {
+                    chunkObj.blocks.push({ ...rel, mesh: blockInfo.mesh });
+                    // Update block mesh position (reset to correct world coords)
+                    blockInfo.mesh.position.set(
+                        parseInt(key.split(",")[0]) * CHUNK_SIZE +
+                            rel.x +
+                            BLOCK_SIZE / 2,
+                        rel.y + BLOCK_SIZE / 2,
+                        parseInt(key.split(",")[1]) * CHUNK_SIZE +
+                            rel.z +
+                            BLOCK_SIZE / 2,
+                    );
+                }
+            }
+
+            // ──────────────────────────────────────────────────────────────────────
+            //   MAIN GAME LOOP
+            // ──────────────────────────────────────────────────────────────────────
+            function animate() {
+                requestAnimationFrame(animate);
+                const delta = clock.getDelta();
+
+                // Simulate drops physics
+                drops.forEach((d) => simulateDrop(d));
+
+                // Auto‑move camera forward for demo
+                // controls.update(delta);
+
+                // Check inventory pickups each frame
+                pickNearbyDrops(0.8);
+
+                renderer.render(scene, camera);
+            }
+
+            // ──────────────────────────────────────────────────────────────────────
+            //   INPUT HANDLING
+            // ──────────────────────────────────────────────────────────────────────
+            window.addEventListener("resize", () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateCameraMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+
+            // Mouse controls for inventory selection
+            invBar.addEventListener("mousedown", (e) => {
+                const slot = e.target.closest(".slot");
+                if (!slot) return;
+                slots.forEach((s) => (s.active = false));
+                slot.classList.add("active");
+                selectedIdx = parseInt(slot.dataset.idx);
+            });
+
+            // Simple click‑to‑mine / place using left/right mouse buttons
+            renderer.domElement.addEventListener("pointerdown", (e) => {
+                if (e.button === 0) {
+                    // left click – mine
+                    mineBlock();
+                } else if (e.button === 2) {
+                    // right click – place
+                    placeBlock();
+                }
+            });
+
+            // ──────────────────────────────────────────────────────────────────────
+            //   WORLD EXPANSION (load new chunks when player moves)
+            // ──────────────────────────────────────────────────────────────────────
+            function updateChunks() {
+                // Simple approach: keep adding chunks around player as needed
+                // Not fully implemented in this minimal demo, but placeholders exist
+            }
+
+            // ────────────────────────────────────────────────────────────
+            //   STARTUP
+            // ────────────────────────────────────────────────────────────
+            function init() {
+                // Initial UI setup
+                updateUI();
+
+                // Start render loop
+                animate();
+
+                // Kick off chunk generation
+                updateChunks();
+
+                // Mouse move listener for camera look
+                renderer.domElement.addEventListener(
+                    "pointermove",
+                    onPointerMove,
+                );
+            }
+            init();
+
+            // ────────────────────────────────────────────────────────────
+            //   MATH HELPERS (inline for functions)
+            // ────────────────────────────────────────────────────────────
+            // Example of block math expression $$g = -9.8$$
+            // used above as `const GRAVITY = -9.8;`
+        </script>
+    </body>
+</html>

@@ -1,0 +1,1276 @@
+<!doctype html>
+<html lang="ru">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>3D Voxel Sandbox — Beautiful Edition</title>
+        <style>
+            body,
+            html {
+                margin: 0;
+                padding: 0;
+                overflow: hidden;
+                width: 100%;
+                height: 100%;
+                background-color: #e0f7fa;
+                font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+            }
+
+            canvas {
+                display: block;
+                width: 100%;
+                height: 100%;
+            }
+
+            #crosshair {
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                width: 12px;
+                height: 12px;
+                transform: translate(-50%, -50%);
+                pointer-events: none;
+                user-select: none;
+                z-index: 10;
+            }
+            #crosshair::before,
+            #crosshair::after {
+                content: "";
+                position: absolute;
+                background: rgba(255, 255, 255, 0.9);
+            }
+            #crosshair::before {
+                top: 5px;
+                left: 0;
+                width: 12px;
+                height: 2px;
+            }
+            #crosshair::after {
+                top: 0;
+                left: 5px;
+                width: 2px;
+                height: 12px;
+            }
+
+            #blocker {
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background-color: rgba(0, 0, 0, 0.4);
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                z-index: 100;
+                cursor: pointer;
+            }
+
+            #instructions {
+                background: rgba(25, 35, 45, 0.9);
+                border: 2px solid #80deea;
+                border-radius: 16px;
+                padding: 30px 40px;
+                color: #fff;
+                text-align: center;
+                box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+                max-width: 500px;
+                backdrop-filter: blur(4px);
+            }
+
+            #instructions h1 {
+                margin-top: 0;
+                font-size: 32px;
+                letter-spacing: 2px;
+                color: #ffeb3b;
+                text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+            }
+
+            #instructions p {
+                line-height: 1.6;
+                margin: 10px 0;
+                font-size: 15px;
+                color: #e0f2f1;
+            }
+
+            .controls-list {
+                text-align: left;
+                background: rgba(255, 255, 255, 0.08);
+                padding: 15px 25px;
+                border-radius: 10px;
+                margin: 20px 0;
+                font-family: monospace;
+                font-size: 14px;
+                line-height: 1.7;
+                color: #b2dfdb;
+            }
+
+            .click-prompt {
+                font-weight: bold;
+                font-size: 18px;
+                color: #ffeb3b;
+                animation: pulse 1.5s infinite;
+            }
+
+            @keyframes pulse {
+                0% {
+                    opacity: 0.6;
+                }
+                50% {
+                    opacity: 1;
+                }
+                100% {
+                    opacity: 0.6;
+                }
+            }
+
+            #hotbar {
+                position: absolute;
+                bottom: 25px;
+                left: 50%;
+                transform: translateX(-50%);
+                display: flex;
+                gap: 10px;
+                background: rgba(20, 30, 40, 0.85);
+                padding: 10px;
+                border-radius: 14px;
+                border: 2px solid rgba(128, 222, 234, 0.5);
+                z-index: 50;
+                user-select: none;
+                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            }
+
+            .slot {
+                width: 68px;
+                height: 68px;
+                background: rgba(45, 55, 72, 0.9);
+                border: 3px solid #4a5568;
+                border-radius: 10px;
+                position: relative;
+                cursor: pointer;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: flex-end;
+                transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+                box-sizing: border-box;
+                padding-bottom: 5px;
+            }
+
+            .slot:hover {
+                border-color: #cbd5e0;
+            }
+
+            .slot.active {
+                border-color: #ffeb3b;
+                background: rgba(74, 85, 104, 0.95);
+                box-shadow: 0 0 15px rgba(255, 235, 59, 0.6);
+                transform: scale(1.1) translateY(-5px);
+            }
+
+            .slot-preview {
+                width: 28px;
+                height: 28px;
+                border-radius: 4px;
+                box-shadow:
+                    inset 0 0 5px rgba(0, 0, 0, 0.4),
+                    0 2px 4px rgba(0, 0, 0, 0.3);
+                margin-bottom: 4px;
+            }
+
+            .slot-count {
+                color: #fff;
+                font-size: 12px;
+                font-weight: bold;
+                font-family: "Courier New", Courier, monospace;
+                text-shadow: 1px 1px 2px #000;
+            }
+
+            .slot-label {
+                color: #cbd5e0;
+                font-size: 8px;
+                text-transform: uppercase;
+                font-weight: 700;
+                letter-spacing: 0.5px;
+                margin-top: 2px;
+            }
+
+            #fallback-tip {
+                position: absolute;
+                top: 15px;
+                left: 50%;
+                transform: translateX(-50%);
+                background: rgba(20, 30, 40, 0.85);
+                color: #fff;
+                padding: 8px 18px;
+                border-radius: 20px;
+                font-size: 12px;
+                border: 1px solid rgba(128, 222, 234, 0.4);
+                pointer-events: none;
+                z-index: 200;
+                display: none;
+            }
+        </style>
+
+        <!-- Использование стабильной библиотеки Three.js -->
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    </head>
+    <body>
+        <div id="crosshair"></div>
+        <div id="fallback-tip">
+            Зажмите левую кнопку мыши (ЛКМ) и тяните для осмотра мира
+        </div>
+
+        <div id="blocker">
+            <div id="instructions">
+                <h1>VOXEL WORLD</h1>
+                <p>
+                    Пастельный процедурный мир с мягким затенением и физикой
+                    воды.
+                </p>
+                <div class="controls-list">
+                    • Движение: W, A, S, D (Ускорение на Shift)<br />
+                    • Прыжок / Плыть вверх: Пробел<br />
+                    • Вращение камеры: Движение мыши<br />
+                    • (Если заблокирован захват: тяните зажатой ЛКМ)<br />
+                    • Ломать блок: Левый клик мыши<br />
+                    • Поставить блок: Правый клик мыши<br />
+                    • Выбор слота: 1 - 5 или Колёсико мыши
+                </div>
+                <p class="click-prompt">Кликните, чтобы войти в мир</p>
+            </div>
+        </div>
+
+        <div id="hotbar"></div>
+
+        <script>
+            // --- 1. Встроенный 2D Perlin Noise для автономной работы ---
+            const PerlinNoise = {
+                p: new Uint8Array(512),
+                init() {
+                    const src = new Uint8Array(256);
+                    for (let i = 0; i < 256; i++) src[i] = i;
+                    for (let i = 255; i > 0; i--) {
+                        const j = Math.floor(Math.random() * (i + 1));
+                        const tmp = src[i];
+                        src[i] = src[j];
+                        src[j] = tmp;
+                    }
+                    for (let i = 0; i < 256; i++) {
+                        this.p[i] = src[i];
+                        this.p[256 + i] = src[i];
+                    }
+                },
+                fade(t) {
+                    return t * t * t * (t * (t * 6 - 15) + 10);
+                },
+                lerp(t, a, b) {
+                    return a + t * (b - a);
+                },
+                grad(hash, x, y) {
+                    const h = hash & 7;
+                    const u = h < 4 ? x : y;
+                    const v = h < 4 ? y : x;
+                    return (h & 1 ? -u : u) + (h & 2 ? -v : v);
+                },
+                noise(x, y) {
+                    const X = Math.floor(x) & 255;
+                    const Y = Math.floor(y) & 255;
+                    x -= Math.floor(x);
+                    y -= Math.floor(y);
+                    const u = this.fade(x);
+                    const v = this.fade(y);
+                    const aa = this.p[this.p[X] + Y];
+                    const ab = this.p[this.p[X] + Y + 1];
+                    const ba = this.p[this.p[X + 1] + Y];
+                    const bb = this.p[this.p[X + 1] + Y + 1];
+                    return this.lerp(
+                        v,
+                        this.lerp(
+                            u,
+                            this.grad(aa, x, y),
+                            this.grad(ba, x - 1, y),
+                        ),
+                        this.lerp(
+                            u,
+                            this.grad(ab, x, y - 1),
+                            this.grad(bb, x - 1, y - 1),
+                        ),
+                    );
+                },
+            };
+            PerlinNoise.init();
+
+            // --- 2. Безопасная инициализация звука ---
+            let audioCtx = null;
+            try {
+                audioCtx = new (
+                    window.AudioContext || window.webkitAudioContext
+                )();
+            } catch (e) {
+                console.warn("Среда заблокировала Web Audio API.");
+            }
+
+            function playProceduralSound(type) {
+                if (!audioCtx) return;
+                try {
+                    if (audioCtx.state === "suspended") {
+                        audioCtx.resume();
+                    }
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+
+                    if (type === "break") {
+                        osc.type = "triangle";
+                        osc.frequency.setValueAtTime(140, audioCtx.currentTime);
+                        osc.frequency.exponentialRampToValueAtTime(
+                            10,
+                            audioCtx.currentTime + 0.12,
+                        );
+                        gain.gain.setValueAtTime(0.4, audioCtx.currentTime);
+                        gain.gain.exponentialRampToValueAtTime(
+                            0.01,
+                            audioCtx.currentTime + 0.12,
+                        );
+                        osc.start();
+                        osc.stop(audioCtx.currentTime + 0.12);
+                    } else if (type === "place") {
+                        osc.type = "sine";
+                        osc.frequency.setValueAtTime(220, audioCtx.currentTime);
+                        osc.frequency.exponentialRampToValueAtTime(
+                            60,
+                            audioCtx.currentTime + 0.08,
+                        );
+                        gain.gain.setValueAtTime(0.25, audioCtx.currentTime);
+                        gain.gain.exponentialRampToValueAtTime(
+                            0.01,
+                            audioCtx.currentTime + 0.08,
+                        );
+                        osc.start();
+                        osc.stop(audioCtx.currentTime + 0.08);
+                    } else if (type === "pickup") {
+                        osc.type = "sine";
+                        osc.frequency.setValueAtTime(580, audioCtx.currentTime);
+                        osc.frequency.exponentialRampToValueAtTime(
+                            1100,
+                            audioCtx.currentTime + 0.08,
+                        );
+                        gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+                        gain.gain.exponentialRampToValueAtTime(
+                            0.01,
+                            audioCtx.currentTime + 0.08,
+                        );
+                        osc.start();
+                        osc.stop(audioCtx.currentTime + 0.08);
+                    }
+                } catch (err) {}
+            }
+
+            // --- 3. Игровые параметры и константы ---
+            const CHUNK_SIZE = 16;
+            const CHUNK_HEIGHT = 32;
+            const RENDER_DIST = 3;
+            const WATER_LEVEL = 7.2; // Уровень океана
+
+            // Премиальная пастельная палитра для чистой картинки
+            const blockTypes = [
+                { id: 1, name: "Grass", color: "#7cb342", hex: 0x7cb342 }, // Теплая луговая трава
+                { id: 2, name: "Dirt", color: "#8d6e63", hex: 0x8d6e63 }, // Мягкая глина
+                { id: 3, name: "Stone", color: "#90a4ae", hex: 0x90a4ae }, // Светлый сланец
+                { id: 4, name: "Wood", color: "#5e4e43", hex: 0x5e4e43 }, // Кора дерева
+                { id: 5, name: "Leaves", color: "#48a859", hex: 0x48a859 }, // Свежая хвоя
+            ];
+
+            const inventory = { 1: 15, 2: 15, 3: 15, 4: 15, 5: 15 };
+            let selectedSlot = 0;
+
+            const chunks = new Map();
+            const chunkMeshes = new Map();
+
+            const scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xb2ebf2); // Чистый нежно-голубой цвет атмосферы
+            scene.fog = new THREE.FogExp2(0xb2ebf2, 0.015);
+
+            const camera = new THREE.PerspectiveCamera(
+                75,
+                window.innerWidth / window.innerHeight,
+                0.1,
+                1000,
+            );
+            camera.rotation.order = "YXZ";
+
+            const renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.body.appendChild(renderer.domElement);
+
+            // Использование MeshBasicMaterial с мягкими множителями симулирует идеальный мультяшный стиль без "черноты"
+            const chunkMaterial = new THREE.MeshBasicMaterial({
+                vertexColors: true,
+            });
+
+            // Белая контрастная рамка для выделения блоков
+            const selectionGeometry = new THREE.BoxGeometry(1.01, 1.01, 1.01);
+            const selectionEdges = new THREE.EdgesGeometry(selectionGeometry);
+            const selectionMaterial = new THREE.LineBasicMaterial({
+                color: 0xffffff,
+                linewidth: 2.5,
+            });
+            const selectionBox = new THREE.LineSegments(
+                selectionEdges,
+                selectionMaterial,
+            );
+            scene.add(selectionBox);
+            selectionBox.visible = false;
+
+            // Линия воды
+            const waterGeom = new THREE.PlaneGeometry(300, 300);
+            const waterMat = new THREE.MeshBasicMaterial({
+                color: 0x00bcd4,
+                transparent: true,
+                opacity: 0.65,
+                side: THREE.DoubleSide,
+            });
+            const water = new THREE.Mesh(waterGeom, waterMat);
+            water.rotation.x = -Math.PI / 2;
+            water.position.set(0, WATER_LEVEL, 0);
+            scene.add(water);
+
+            // Низкополигональные облака
+            const clouds = [];
+            function spawnClouds() {
+                const cloudGeom = new THREE.BoxGeometry(12, 1.5, 7);
+                const cloudMat = new THREE.MeshBasicMaterial({
+                    color: 0xffffff,
+                    transparent: true,
+                    opacity: 0.85,
+                });
+                for (let i = 0; i < 15; i++) {
+                    const mesh = new THREE.Mesh(cloudGeom, cloudMat);
+                    mesh.position.set(
+                        (Math.random() - 0.5) * 160,
+                        24 + Math.random() * 4,
+                        (Math.random() - 0.5) * 160,
+                    );
+                    scene.add(mesh);
+                    clouds.push(mesh);
+                }
+            }
+            spawnClouds();
+
+            // --- 4. Обработка ввода и обход ограничений Pointer Lock ---
+            const keys = {
+                w: false,
+                a: false,
+                s: false,
+                d: false,
+                space: false,
+                shift: false,
+            };
+            let lastPlayerCx = null;
+            let lastPlayerCz = null;
+
+            let isDragging = false;
+            let previousMousePosition = { x: 0, y: 0 };
+            let dragStart = { x: 0, y: 0 };
+            const currentMousePos = new THREE.Vector2();
+
+            const blocker = document.getElementById("blocker");
+            const fallbackTip = document.getElementById("fallback-tip");
+
+            blocker.addEventListener("mousedown", (e) => {
+                document.body.requestPointerLock();
+                blocker.style.display = "none";
+                if (audioCtx && audioCtx.state === "suspended") {
+                    audioCtx.resume();
+                }
+            });
+
+            document.addEventListener("pointerlockchange", () => {
+                if (document.pointerLockElement === document.body) {
+                    fallbackTip.style.display = "none";
+                } else {
+                    fallbackTip.style.display = "block";
+                    Object.keys(keys).forEach((k) => (keys[k] = false));
+                }
+            });
+
+            window.addEventListener("keydown", (e) => {
+                const k = e.key.toLowerCase();
+                if (k === "w") keys.w = true;
+                if (k === "a") keys.a = true;
+                if (k === "s") keys.s = true;
+                if (k === "d") keys.d = true;
+                if (e.code === "Space") keys.space = true;
+                if (e.key === "Shift") keys.shift = true;
+
+                if (e.key >= "1" && e.key <= "5") {
+                    selectedSlot = parseInt(e.key) - 1;
+                    updateInventoryUI();
+                }
+            });
+
+            window.addEventListener("keyup", (e) => {
+                const k = e.key.toLowerCase();
+                if (k === "w") keys.w = false;
+                if (k === "a") keys.a = false;
+                if (k === "s") keys.s = false;
+                if (k === "d") keys.d = false;
+                if (e.code === "Space") keys.space = false;
+                if (e.key === "Shift") keys.shift = false;
+            });
+
+            window.addEventListener("mousedown", (e) => {
+                if (document.pointerLockElement !== document.body) {
+                    isDragging = true;
+                    previousMousePosition = { x: e.clientX, y: e.clientY };
+                    dragStart = { x: e.clientX, y: e.clientY };
+                }
+            });
+
+            window.addEventListener("mousemove", (e) => {
+                currentMousePos.x = (e.clientX / window.innerWidth) * 2 - 1;
+                currentMousePos.y = -(e.clientY / window.innerHeight) * 2 + 1;
+
+                if (document.pointerLockElement === document.body) {
+                    camera.rotation.y -= e.movementX * 0.0022;
+                    camera.rotation.x -= e.movementY * 0.0022;
+                    camera.rotation.x = Math.max(
+                        -Math.PI / 2 + 0.05,
+                        Math.min(Math.PI / 2 - 0.05, camera.rotation.x),
+                    );
+                } else if (isDragging) {
+                    const deltaX = e.clientX - previousMousePosition.x;
+                    const deltaY = e.clientY - previousMousePosition.y;
+                    previousMousePosition = { x: e.clientX, y: e.clientY };
+
+                    camera.rotation.y -= deltaX * 0.004;
+                    camera.rotation.x -= deltaY * 0.004;
+                    camera.rotation.x = Math.max(
+                        -Math.PI / 2 + 0.05,
+                        Math.min(Math.PI / 2 - 0.05, camera.rotation.x),
+                    );
+                }
+            });
+
+            window.addEventListener("mouseup", (e) => {
+                if (isDragging) {
+                    isDragging = false;
+                    const dist = Math.hypot(
+                        e.clientX - dragStart.x,
+                        e.clientY - dragStart.y,
+                    );
+                    if (dist < 4) {
+                        handleInteraction(e);
+                    }
+                } else {
+                    handleInteraction(e);
+                }
+            });
+
+            window.addEventListener("wheel", (e) => {
+                if (e.deltaY > 0) {
+                    selectedSlot = (selectedSlot + 1) % blockTypes.length;
+                } else {
+                    selectedSlot =
+                        (selectedSlot - 1 + blockTypes.length) %
+                        blockTypes.length;
+                }
+                updateInventoryUI();
+            });
+
+            window.addEventListener("contextmenu", (e) => e.preventDefault());
+
+            // --- 5. Генерация ландшафта ---
+            function getHeight(gx, gz) {
+                const base = PerlinNoise.noise(gx * 0.015, gz * 0.015) * 11;
+                const detail = PerlinNoise.noise(gx * 0.05, gz * 0.05) * 3;
+                const select = PerlinNoise.noise(gx * 0.005, gz * 0.005);
+                const blend = Math.max(0, Math.min(1, (select + 0.1) * 2));
+
+                const finalHeight = Math.floor(
+                    base * blend + detail * 0.5 + 12,
+                );
+                return Math.max(2, Math.min(CHUNK_HEIGHT - 6, finalHeight));
+            }
+
+            function generateChunkData(cx, cz) {
+                const key = `${cx},${cz}`;
+                if (chunks.has(key)) return;
+
+                const blocks = [];
+                for (let x = 0; x < CHUNK_SIZE; x++) {
+                    blocks[x] = [];
+                    for (let y = 0; y < CHUNK_HEIGHT; y++) {
+                        blocks[x][y] = new Uint8Array(CHUNK_SIZE);
+                    }
+                }
+
+                for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+                    for (let lz = 0; lz < CHUNK_SIZE; lz++) {
+                        const gx = cx * CHUNK_SIZE + lx;
+                        const gz = cz * CHUNK_SIZE + lz;
+                        const h = getHeight(gx, gz);
+
+                        for (let ly = 0; ly < CHUNK_HEIGHT; ly++) {
+                            if (ly > h) {
+                                blocks[lx][ly][lz] = 0;
+                            } else if (ly === h) {
+                                blocks[lx][ly][lz] = 1;
+                            } else if (ly < h && ly >= h - 3) {
+                                blocks[lx][ly][lz] = 2;
+                            } else {
+                                blocks[lx][ly][lz] = 3;
+                            }
+                        }
+                    }
+                }
+
+                const treeChance = 0.035;
+                for (let lx = 2; lx < CHUNK_SIZE - 2; lx++) {
+                    for (let lz = 2; lz < CHUNK_SIZE - 2; lz++) {
+                        const gx = cx * CHUNK_SIZE + lx;
+                        const gz = cz * CHUNK_SIZE + lz;
+                        const h = getHeight(gx, gz);
+
+                        if (
+                            blocks[lx][h][lz] === 1 &&
+                            Math.random() < treeChance &&
+                            h > WATER_LEVEL
+                        ) {
+                            blocks[lx][h][lz] = 2;
+                            const trunkHeight =
+                                Math.floor(Math.random() * 2) + 4;
+                            for (let th = 1; th <= trunkHeight; th++) {
+                                blocks[lx][h + th][lz] = 4;
+                            }
+
+                            const canopyBase = h + trunkHeight - 1;
+                            for (let dy = 0; dy <= 2; dy++) {
+                                const radius = dy === 2 ? 1 : 2;
+                                for (let dx = -radius; dx <= radius; dx++) {
+                                    for (let dz = -radius; dz <= radius; dz++) {
+                                        if (
+                                            Math.abs(dx) === radius &&
+                                            Math.abs(dz) === radius &&
+                                            radius > 1
+                                        )
+                                            continue;
+                                        const targetY = canopyBase + dy;
+                                        if (targetY >= CHUNK_HEIGHT) continue;
+                                        if (
+                                            blocks[lx + dx][targetY][
+                                                lz + dz
+                                            ] === 0
+                                        ) {
+                                            blocks[lx + dx][targetY][lz + dz] =
+                                                5;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                chunks.set(key, { blocks: blocks });
+            }
+
+            // --- 6. Кастомный расчет меша ---
+            const faces = [
+                {
+                    dir: [1, 0, 0],
+                    corners: [
+                        [1, 1, 1],
+                        [1, 1, 0],
+                        [1, 0, 0],
+                        [1, 1, 1],
+                        [1, 0, 0],
+                        [1, 0, 1],
+                    ],
+                },
+                {
+                    dir: [-1, 0, 0],
+                    corners: [
+                        [0, 1, 0],
+                        [0, 1, 1],
+                        [0, 0, 1],
+                        [0, 1, 0],
+                        [0, 0, 1],
+                        [0, 0, 0],
+                    ],
+                },
+                {
+                    dir: [0, 1, 0],
+                    corners: [
+                        [0, 1, 1],
+                        [1, 1, 1],
+                        [1, 1, 0],
+                        [0, 1, 1],
+                        [1, 1, 0],
+                        [0, 1, 0],
+                    ],
+                },
+                {
+                    dir: [0, -1, 0],
+                    corners: [
+                        [0, 0, 0],
+                        [1, 0, 0],
+                        [1, 0, 1],
+                        [0, 0, 0],
+                        [1, 0, 1],
+                        [0, 0, 1],
+                    ],
+                },
+                {
+                    dir: [0, 0, 1],
+                    corners: [
+                        [0, 1, 1],
+                        [0, 0, 1],
+                        [1, 0, 1],
+                        [0, 1, 1],
+                        [1, 0, 1],
+                        [1, 1, 1],
+                    ],
+                },
+                {
+                    dir: [0, 0, -1],
+                    corners: [
+                        [1, 1, 0],
+                        [1, 0, 0],
+                        [0, 0, 0],
+                        [1, 1, 0],
+                        [0, 0, 0],
+                        [0, 1, 0],
+                    ],
+                },
+            ];
+
+            function getBlock(gx, gy, gz) {
+                if (gy < 0 || gy >= CHUNK_HEIGHT) return 0;
+                const cx = Math.floor(gx / CHUNK_SIZE);
+                const cz = Math.floor(gz / CHUNK_SIZE);
+                const rx = gx - cx * CHUNK_SIZE;
+                const ry = gy;
+                const rz = gz - cz * CHUNK_SIZE;
+
+                const chunk = chunks.get(`${cx},${cz}`);
+                if (!chunk) return 0;
+                return chunk.blocks[rx][ry][rz];
+            }
+
+            function setBlock(gx, gy, gz, val) {
+                if (gy < 0 || gy >= CHUNK_HEIGHT) return;
+                const cx = Math.floor(gx / CHUNK_SIZE);
+                const cz = Math.floor(gz / CHUNK_SIZE);
+                const rx = gx - cx * CHUNK_SIZE;
+                const ry = gy;
+                const rz = gz - cz * CHUNK_SIZE;
+
+                const key = `${cx},${cz}`;
+                const chunk = chunks.get(key);
+                if (!chunk) return;
+
+                chunk.blocks[rx][ry][rz] = val;
+
+                rebuildChunkMesh(cx, cz);
+
+                if (rx === 0) rebuildChunkMesh(cx - 1, cz);
+                if (rx === CHUNK_SIZE - 1) rebuildChunkMesh(cx + 1, cz);
+                if (rz === 0) rebuildChunkMesh(cx, cz - 1);
+                if (rz === CHUNK_SIZE - 1) rebuildChunkMesh(cx, cz + 1);
+            }
+
+            function rebuildChunkMesh(cx, cz) {
+                const key = `${cx},${cz}`;
+                const chunk = chunks.get(key);
+                if (!chunk) return;
+
+                if (chunkMeshes.has(key)) {
+                    const mesh = chunkMeshes.get(key);
+                    scene.remove(mesh);
+                    mesh.geometry.dispose();
+                    chunkMeshes.delete(key);
+                }
+
+                const positions = [];
+                const normals = [];
+                const colors = [];
+
+                const getHexRGB = (id) => {
+                    const type = blockTypes.find((t) => t.id === id);
+                    if (!type) return { r: 1, g: 1, b: 1 };
+                    const hexStr = type.color.replace("#", "");
+                    return {
+                        r: parseInt(hexStr.substring(0, 2), 16) / 255,
+                        g: parseInt(hexStr.substring(2, 4), 16) / 255,
+                        b: parseInt(hexStr.substring(4, 6), 16) / 255,
+                    };
+                };
+
+                for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+                    for (let ly = 0; ly < CHUNK_HEIGHT; ly++) {
+                        for (let lz = 0; lz < CHUNK_SIZE; lz++) {
+                            const blockId = chunk.blocks[lx][ly][lz];
+                            if (blockId === 0) continue;
+
+                            const gx = cx * CHUNK_SIZE + lx;
+                            const gy = ly;
+                            const gz = cz * CHUNK_SIZE + lz;
+
+                            faces.forEach((face) => {
+                                const nx = gx + face.dir[0];
+                                const ny = gy + face.dir[1];
+                                const nz = gz + face.dir[2];
+
+                                const neighbor = getBlock(nx, ny, nz);
+                                if (neighbor === 0) {
+                                    const baseColor = getHexRGB(blockId);
+
+                                    // Идеально настроенные мягкие коэффициенты затенения убирают жесткие черные грани
+                                    let f = 1.0;
+                                    if (face.dir[1] === 1)
+                                        f = 1.0; // Верхняя грань (яркая)
+                                    else if (face.dir[1] === -1)
+                                        f = 0.55; // Нижняя грань (мягкая тень)
+                                    else if (face.dir[0] !== 0)
+                                        f = 0.82; // Лево/Право
+                                    else f = 0.72; // Перед/Зад
+
+                                    face.corners.forEach((corner) => {
+                                        positions.push(
+                                            lx + corner[0],
+                                            ly + corner[1],
+                                            lz + corner[2],
+                                        );
+                                        normals.push(
+                                            face.dir[0],
+                                            face.dir[1],
+                                            face.dir[2],
+                                        );
+                                        colors.push(
+                                            baseColor.r * f,
+                                            baseColor.g * f,
+                                            baseColor.b * f,
+                                        );
+                                    });
+                                }
+                            });
+                        }
+                    }
+                }
+
+                if (positions.length === 0) return;
+
+                const geometry = new THREE.BufferGeometry();
+                geometry.setAttribute(
+                    "position",
+                    new THREE.Float32BufferAttribute(positions, 3),
+                );
+                geometry.setAttribute(
+                    "normal",
+                    new THREE.Float32BufferAttribute(normals, 3),
+                );
+                geometry.setAttribute(
+                    "color",
+                    new THREE.Float32BufferAttribute(colors, 3),
+                );
+                geometry.computeBoundingSphere();
+
+                const mesh = new THREE.Mesh(geometry, chunkMaterial);
+                mesh.position.set(cx * CHUNK_SIZE, 0, cz * CHUNK_SIZE);
+                scene.add(mesh);
+                chunkMeshes.set(key, mesh);
+            }
+
+            // --- 7. Двухфазная инициализация чанков (УСТРАНЯЕТ ЩЕЛИ) ---
+            function loadWorldRegion(centerCx, centerCz) {
+                // Фаза 1: Сначала создаем массивы данных блоков для всех чанков в радиусе видимости
+                for (let dx = -RENDER_DIST - 1; dx <= RENDER_DIST + 1; dx++) {
+                    for (
+                        let dz = -RENDER_DIST - 1;
+                        dz <= RENDER_DIST + 1;
+                        dz++
+                    ) {
+                        generateChunkData(centerCx + dx, centerCz + dz);
+                    }
+                }
+                // Фаза 2: Строим 3D меши на гарантированно полной карте соседей
+                for (let dx = -RENDER_DIST; dx <= RENDER_DIST; dx++) {
+                    for (let dz = -RENDER_DIST; dz <= RENDER_DIST; dz++) {
+                        const ccx = centerCx + dx;
+                        const ccz = centerCz + dz;
+                        const key = `${ccx},${ccz}`;
+                        if (!chunkMeshes.has(key)) {
+                            rebuildChunkMesh(ccx, ccz);
+                        }
+                    }
+                }
+            }
+
+            // Первичная безопасная генерация
+            loadWorldRegion(0, 0);
+
+            // --- 8. Безопасное обновление видимой зоны чанков ---
+            function updateChunks() {
+                const pCx = Math.floor(camera.position.x / CHUNK_SIZE);
+                const pCz = Math.floor(camera.position.z / CHUNK_SIZE);
+
+                if (pCx !== lastPlayerCx || pCz !== lastPlayerCz) {
+                    // Загружаем всю окрестность в два прохода
+                    loadWorldRegion(pCx, pCz);
+
+                    // Очистка памяти от ушедших чанков
+                    for (let [key, mesh] of chunkMeshes.entries()) {
+                        const [mcx, mcz] = key.split(",").map(Number);
+                        if (
+                            Math.abs(mcx - pCx) > RENDER_DIST + 1 ||
+                            Math.abs(mcz - pCz) > RENDER_DIST + 1
+                        ) {
+                            scene.remove(mesh);
+                            mesh.geometry.dispose();
+                            chunkMeshes.delete(key);
+                        }
+                    }
+
+                    lastPlayerCx = pCx;
+                    lastPlayerCz = pCz;
+                }
+            }
+
+            // --- 9. Физика выпадающих предметов (Drops & Loot) ---
+            const drops = [];
+
+            function spawnDrop(x, y, z, type) {
+                const size = 0.22;
+                const geom = new THREE.BoxGeometry(size, size, size);
+                const blockColor = blockTypes.find((t) => t.id === type).color;
+                const mat = new THREE.MeshBasicMaterial({
+                    color: new THREE.Color(blockColor),
+                });
+                const mesh = new THREE.Mesh(geom, mat);
+                mesh.position.set(x, y, z);
+                scene.add(mesh);
+
+                drops.push({
+                    mesh: mesh,
+                    type: type,
+                    position: new THREE.Vector3(x, y, z),
+                    velocity: new THREE.Vector3(
+                        (Math.random() - 0.5) * 1.8,
+                        Math.random() * 2 + 2,
+                        (Math.random() - 0.5) * 1.8,
+                    ),
+                    age: 0,
+                });
+            }
+
+            function updateDrops(dt) {
+                const playerFeet = camera.position.clone();
+                playerFeet.y -= 1.3;
+
+                for (let i = drops.length - 1; i >= 0; i--) {
+                    const drop = drops[i];
+                    drop.age += dt;
+
+                    drop.velocity.y += gravity * dt;
+                    const nextPos = drop.position
+                        .clone()
+                        .addScaledVector(drop.velocity, dt);
+
+                    const cx = Math.floor(nextPos.x);
+                    const cy = Math.floor(nextPos.y);
+                    const cz = Math.floor(nextPos.z);
+
+                    if (getBlock(cx, cy, cz) > 0) {
+                        if (drop.velocity.y < 0) {
+                            drop.velocity.y = -drop.velocity.y * 0.35;
+                            drop.velocity.x *= 0.55;
+                            drop.velocity.z *= 0.55;
+                        } else {
+                            drop.velocity.set(0, 0, 0);
+                        }
+                    } else {
+                        drop.position.copy(nextPos);
+                    }
+
+                    const dist = drop.position.distanceTo(playerFeet);
+                    if (dist < 4.5) {
+                        const pullDir = new THREE.Vector3()
+                            .subVectors(playerFeet, drop.position)
+                            .normalize();
+                        const pullSpeed = (4.5 - dist) * 3.8;
+                        drop.position.addScaledVector(pullDir, pullSpeed * dt);
+                    }
+
+                    drop.mesh.position.copy(drop.position);
+                    drop.mesh.rotation.x += 1.5 * dt;
+                    drop.mesh.rotation.y += 2.2 * dt;
+
+                    if (dist < 0.75) {
+                        playProceduralSound("pickup");
+                        inventory[drop.type] = (inventory[drop.type] || 0) + 1;
+                        updateInventoryUI();
+
+                        scene.remove(drop.mesh);
+                        drop.mesh.geometry.dispose();
+                        drops.splice(i, 1);
+                        continue;
+                    }
+
+                    if (drop.age > 60) {
+                        scene.remove(drop.mesh);
+                        drop.mesh.geometry.dispose();
+                        drops.splice(i, 1);
+                    }
+                }
+            }
+
+            // --- 10. Системы взаимодействия ---
+            const raycaster = new THREE.Raycaster();
+
+            function handleInteraction(e) {
+                if (document.pointerLockElement === document.body) {
+                    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+                } else {
+                    raycaster.setFromCamera(currentMousePos, camera);
+                }
+
+                const meshes = Array.from(chunkMeshes.values());
+                const intersects = raycaster.intersectObjects(meshes);
+
+                if (intersects.length > 0) {
+                    const hit = intersects[0];
+                    if (hit.distance > 6.0) return;
+
+                    const point = hit.point;
+                    const normal = hit.face.normal;
+
+                    if (e.button === 0) {
+                        const tx = Math.floor(point.x - normal.x * 0.1);
+                        const ty = Math.floor(point.y - normal.y * 0.1);
+                        const tz = Math.floor(point.z - normal.z * 0.1);
+
+                        const type = getBlock(tx, ty, tz);
+                        if (type > 0) {
+                            setBlock(tx, ty, tz, 0);
+                            playProceduralSound("break");
+                            spawnDrop(tx + 0.5, ty + 0.5, tz + 0.5, type);
+                        }
+                    } else if (e.button === 2) {
+                        const px = Math.floor(point.x + normal.x * 0.1);
+                        const py = Math.floor(point.y + normal.y * 0.1);
+                        const pz = Math.floor(point.z + normal.z * 0.1);
+
+                        const blockToBuild = blockTypes[selectedSlot].id;
+                        if (inventory[blockToBuild] <= 0) return;
+
+                        const pX = camera.position.x;
+                        const pY = camera.position.y;
+                        const pZ = camera.position.z;
+                        if (px === Math.floor(pX) && pz === Math.floor(pZ)) {
+                            if (
+                                py >= Math.floor(pY - 1.6) &&
+                                py <= Math.floor(pY + 0.2)
+                            ) {
+                                return;
+                            }
+                        }
+
+                        setBlock(px, py, pz, blockToBuild);
+                        inventory[blockToBuild]--;
+                        updateInventoryUI();
+                        playProceduralSound("place");
+                    }
+                }
+            }
+
+            function updateRaycast() {
+                if (document.pointerLockElement === document.body) {
+                    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+                } else {
+                    raycaster.setFromCamera(currentMousePos, camera);
+                }
+
+                const meshes = Array.from(chunkMeshes.values());
+                const intersects = raycaster.intersectObjects(meshes);
+
+                if (intersects.length > 0 && intersects[0].distance <= 6.0) {
+                    const hit = intersects[0];
+                    const point = hit.point;
+                    const normal = hit.face.normal;
+
+                    const tx = Math.floor(point.x - normal.x * 0.1);
+                    const ty = Math.floor(point.y - normal.y * 0.1);
+                    const tz = Math.floor(point.z - normal.z * 0.1);
+
+                    selectionBox.position.set(tx + 0.5, ty + 0.5, tz + 0.5);
+                    selectionBox.visible = true;
+                } else {
+                    selectionBox.visible = false;
+                }
+            }
+
+            // --- 11. Интерфейс (UI) ---
+            function updateInventoryUI() {
+                const hotbar = document.getElementById("hotbar");
+                hotbar.innerHTML = "";
+
+                blockTypes.forEach((type, idx) => {
+                    const count = inventory[type.id] || 0;
+                    const slotDiv = document.createElement("div");
+                    slotDiv.className = `slot ${idx === selectedSlot ? "active" : ""}`;
+                    slotDiv.innerHTML = `
+                    <div class="slot-preview" style="background: ${type.color}"></div>
+                    <div class="slot-count">${count}</div>
+                    <div class="slot-label">${type.name}</div>
+                `;
+                    slotDiv.addEventListener("click", (e) => {
+                        e.stopPropagation();
+                        selectedSlot = idx;
+                        updateInventoryUI();
+                    });
+                    hotbar.appendChild(slotDiv);
+                });
+            }
+            updateInventoryUI();
+
+            // --- 12. Физика передвижения и коллизии ---
+            let velocityY = 0;
+            const gravity = -22.0;
+            let onGround = false;
+
+            function isColliding(px, py, pz) {
+                const radius = 0.3;
+                const feet = py - 1.6;
+                const head = py + 0.15;
+
+                const minX = Math.floor(px - radius);
+                const maxX = Math.floor(px + radius);
+                const minY = Math.floor(feet);
+                const maxY = Math.floor(head);
+                const minZ = Math.floor(pz - radius);
+                const maxZ = Math.floor(pz + radius);
+
+                for (let x = minX; x <= maxX; x++) {
+                    for (let y = minY; y <= maxY; y++) {
+                        for (let z = minZ; z <= maxZ; z++) {
+                            if (getBlock(x, y, z) > 0) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                return false;
+            }
+
+            // --- 13. Основной игровой цикл ---
+            let lastTime = performance.now();
+
+            function animate() {
+                requestAnimationFrame(animate);
+
+                const time = performance.now();
+                let dt = (time - lastTime) / 1000;
+                lastTime = time;
+
+                if (dt > 0.1) dt = 0.1;
+
+                // Логика плавания в воде
+                const inWater = camera.position.y < WATER_LEVEL;
+                let currentSpeed = keys.shift ? 8.5 : 5.0;
+                if (inWater) {
+                    currentSpeed = 2.5; // Замедление в воде
+                }
+
+                const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(
+                    camera.quaternion,
+                );
+                forward.y = 0;
+                forward.normalize();
+
+                const right = new THREE.Vector3(1, 0, 0).applyQuaternion(
+                    camera.quaternion,
+                );
+                right.y = 0;
+                right.normalize();
+
+                const moveDir = new THREE.Vector3();
+                if (keys.w) moveDir.add(forward);
+                if (keys.s) moveDir.sub(forward);
+                if (keys.a) moveDir.sub(right);
+                if (keys.d) moveDir.add(right);
+                moveDir.normalize();
+
+                const targetXVel = moveDir.x * currentSpeed;
+                const targetZVel = moveDir.z * currentSpeed;
+
+                // Расчет вертикального движения с учетом воды
+                if (inWater) {
+                    velocityY += gravity * 0.2 * dt; // Ослабленная гравитация
+                    if (velocityY < -3) velocityY = -3;
+                    if (keys.space) {
+                        velocityY = 2.5; // Плывем вверх
+                    }
+                } else {
+                    velocityY += gravity * dt;
+                    if (velocityY < -25) velocityY = -25;
+                    if (keys.space && onGround) {
+                        velocityY = 8.0;
+                        onGround = false;
+                    }
+                }
+
+                const nextX = camera.position.x + targetXVel * dt;
+                if (!isColliding(nextX, camera.position.y, camera.position.z)) {
+                    camera.position.x = nextX;
+                }
+
+                const nextZ = camera.position.z + targetZVel * dt;
+                if (!isColliding(camera.position.x, camera.position.y, nextZ)) {
+                    camera.position.z = nextZ;
+                }
+
+                const nextY = camera.position.y + velocityY * dt;
+                if (isColliding(camera.position.x, nextY, camera.position.z)) {
+                    if (velocityY < 0) {
+                        onGround = true;
+                    }
+                    velocityY = 0;
+                } else {
+                    camera.position.y = nextY;
+                    onGround = false;
+                }
+
+                // Защита от провала сквозь текстуры
+                if (camera.position.y < -15) {
+                    camera.position.set(0.5, getHeight(0, 0) + 3, 0.5);
+                    velocityY = 0;
+                    onGround = true;
+                }
+
+                // Медленное движение облаков
+                clouds.forEach((cloud) => {
+                    cloud.position.x += 1.2 * dt;
+                    if (cloud.position.x > 80) cloud.position.x = -80;
+                });
+
+                updateChunks();
+                updateRaycast();
+                updateDrops(dt);
+
+                renderer.render(scene, camera);
+            }
+
+            animate();
+
+            window.addEventListener("resize", () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+        </script>
+    </body>
+</html>

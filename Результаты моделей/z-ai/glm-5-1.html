@@ -1,0 +1,943 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Voxel Sandbox</title>
+        <style>
+            body {
+                margin: 0;
+                overflow: hidden;
+                background-color: #87ceeb;
+                font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+                user-select: none;
+            }
+            #ui {
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                pointer-events: none;
+            }
+            #crosshair {
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                width: 24px;
+                height: 24px;
+                transform: translate(-50%, -50%);
+                border: 2px solid rgba(255, 255, 255, 0.8);
+                border-radius: 50%;
+                box-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
+            }
+            #crosshair::after {
+                content: "";
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                width: 4px;
+                height: 4px;
+                transform: translate(-50%, -50%);
+                background: rgba(255, 0, 0, 0.8);
+                border-radius: 50%;
+            }
+            #hotbar {
+                position: absolute;
+                bottom: 20px;
+                left: 50%;
+                transform: translateX(-50%);
+                display: flex;
+                gap: 4px;
+                background: rgba(0, 0, 0, 0.4);
+                padding: 6px;
+                border-radius: 6px;
+            }
+            .slot {
+                width: 50px;
+                height: 50px;
+                border: 2px solid #555;
+                border-radius: 4px;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                position: relative;
+            }
+            .slot.active {
+                border-color: #fff;
+                box-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+            }
+            .slot-block {
+                width: 30px;
+                height: 30px;
+                border-radius: 4px;
+                box-shadow: inset -2px -2px 0 rgba(0, 0, 0, 0.2);
+            }
+            .slot-count {
+                color: #fff;
+                font-size: 14px;
+                font-weight: bold;
+                text-shadow: 1px 1px 0 #000;
+                position: absolute;
+                bottom: 2px;
+                right: 4px;
+            }
+            .slot-name {
+                color: #fff;
+                font-size: 10px;
+                text-shadow: 1px 1px 0 #000;
+                margin-top: 2px;
+            }
+            #start-screen {
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.7);
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                color: white;
+                pointer-events: all;
+                cursor: pointer;
+            }
+            #start-screen h1 {
+                font-size: 48px;
+                margin-bottom: 10px;
+            }
+            #start-screen p {
+                font-size: 18px;
+                color: #ccc;
+            }
+            #start-screen .keys {
+                font-size: 14px;
+                color: #aaa;
+                margin-top: 30px;
+                line-height: 1.6;
+                text-align: left;
+            }
+        </style>
+    </head>
+    <body>
+        <div id="ui">
+            <div id="crosshair"></div>
+            <div id="hotbar"></div>
+        </div>
+        <div id="start-screen">
+            <h1>Voxel Sandbox</h1>
+            <p>Click to Play</p>
+            <div class="keys">
+                WASD - Move<br />
+                Space - Jump<br />
+                Mouse - Look<br />
+                LMB - Break Block<br />
+                RMB - Place Block<br />
+                1-4 - Select Block
+            </div>
+        </div>
+
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+        <script>
+            // --- CONSTANTS & CONFIG ---
+            const CHUNK_SIZE = 16;
+            const CHUNK_HEIGHT = 64;
+            const SEA_LEVEL = 20;
+            const RENDER_DISTANCE = 3;
+            const GRAVITY = 25;
+            const JUMP_FORCE = 9;
+            const PLAYER_HEIGHT = 1.6;
+            const PLAYER_RADIUS = 0.3;
+            const PICKUP_RANGE = 1.5;
+            const BLOCK_TYPES = {
+                0: { name: "Air", color: null },
+                1: { name: "Grass", color: 0x5d8c3e },
+                2: { name: "Dirt", color: 0x8b6b3d },
+                3: { name: "Stone", color: 0x888888 },
+                4: { name: "Wood", color: 0x6b4226 },
+            };
+
+            // --- THREE.JS SETUP ---
+            const scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87ceeb);
+            scene.fog = new THREE.Fog(
+                0x87ceeb,
+                CHUNK_SIZE * (RENDER_DISTANCE - 1),
+                CHUNK_SIZE * RENDER_DISTANCE,
+            );
+
+            const camera = new THREE.PerspectiveCamera(
+                75,
+                window.innerWidth / window.innerHeight,
+                0.1,
+                1000,
+            );
+            const renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
+            dirLight.position.set(50, 100, 50);
+            scene.add(dirLight);
+
+            // --- PLAYER STATE ---
+            const player = {
+                position: new THREE.Vector3(8, 40, 8),
+                velocity: new THREE.Vector3(0, 0, 0),
+                onGround: false,
+                yaw: 0,
+                pitch: 0,
+            };
+
+            const inventory = {
+                1: 0,
+                2: 0,
+                3: 0,
+                4: 0,
+                activeSlot: 1,
+            };
+
+            // --- WORLD DATA ---
+            const chunks = new Map();
+            const drops = [];
+            const geometry = new THREE.BoxGeometry(1, 1, 1);
+
+            // --- NOISE FUNCTIONS (Value Noise) ---
+            function hash(x, y) {
+                let n = (x * 73856093) ^ (y * 19349663);
+                n = (n << 13) ^ n;
+                return (
+                    ((n * (n * n * 15731 + 789221) + 1376312589) & 0x7fffffff) /
+                    0x7fffffff
+                );
+            }
+
+            function lerp(a, b, t) {
+                return a + t * (b - a);
+            }
+            function smoothstep(t) {
+                return t * t * (3 - 2 * t);
+            }
+
+            function noise2D(x, y) {
+                const ix = Math.floor(x),
+                    iy = Math.floor(y);
+                const fx = x - ix,
+                    fy = y - iy;
+                const sx = smoothstep(fx),
+                    sy = smoothstep(fy);
+                const n00 = hash(ix, iy);
+                const n10 = hash(ix + 1, iy);
+                const n01 = hash(ix, iy + 1);
+                const n11 = hash(ix + 1, iy + 1);
+                const nx0 = lerp(n00, n10, sx);
+                const nx1 = lerp(n01, n11, sx);
+                return lerp(nx0, nx1, sy);
+            }
+
+            function fbm(x, y, octaves) {
+                let value = 0,
+                    amplitude = 1,
+                    frequency = 1,
+                    maxVal = 0;
+                for (let i = 0; i < octaves; i++) {
+                    value += noise2D(x * frequency, y * frequency) * amplitude;
+                    maxVal += amplitude;
+                    amplitude *= 0.5;
+                    frequency *= 2;
+                }
+                return value / maxVal;
+            }
+
+            // --- CHUNK & WORLD MANAGEMENT ---
+            function getChunkKey(cx, cz) {
+                return `${cx},${cz}`;
+            }
+
+            function generateChunkData(cx, cz) {
+                const data = new Uint8Array(
+                    CHUNK_SIZE * CHUNK_HEIGHT * CHUNK_SIZE,
+                );
+                for (let x = 0; x < CHUNK_SIZE; x++) {
+                    for (let z = 0; z < CHUNK_SIZE; z++) {
+                        const worldX = cx * CHUNK_SIZE + x;
+                        const worldZ = cz * CHUNK_SIZE + z;
+
+                        // Terrain shape
+                        const h1 = fbm(worldX * 0.01, worldZ * 0.01, 4) * 20; // Hills
+                        const h2 = fbm(worldX * 0.05, worldZ * 0.05, 2) * 5; // Detail
+                        const height = Math.floor(SEA_LEVEL + h1 + h2);
+
+                        // Tree placement (stochastic)
+                        const treeSeed = hash(worldX * 0.7, worldZ * 0.9);
+                        const hasTree =
+                            treeSeed > 0.985 &&
+                            x > 1 &&
+                            x < CHUNK_SIZE - 2 &&
+                            z > 1 &&
+                            z < CHUNK_SIZE - 2;
+
+                        for (let y = 0; y < CHUNK_HEIGHT; y++) {
+                            let blockId = 0;
+                            if (y === height)
+                                blockId = 1; // Grass
+                            else if (y < height && y >= height - 3)
+                                blockId = 2; // Dirt
+                            else if (y < height - 3 && y > 0) blockId = 3; // Stone
+
+                            // Tree trunk
+                            if (hasTree && y > height && y <= height + 4)
+                                blockId = 4;
+
+                            const idx =
+                                x * CHUNK_HEIGHT * CHUNK_SIZE +
+                                y * CHUNK_SIZE +
+                                z;
+                            data[idx] = blockId;
+                        }
+
+                        // Tree Leaves (Modifying neighbors - simplified: put in same chunk col, or just accept partial trees)
+                        if (hasTree) {
+                            for (let lx = -2; lx <= 2; lx++) {
+                                for (let lz = -2; lz <= 2; lz++) {
+                                    for (let ly = 3; ly <= 5; ly++) {
+                                        if (
+                                            Math.abs(lx) === 2 &&
+                                            Math.abs(lz) === 2 &&
+                                            ly === 5
+                                        )
+                                            continue;
+                                        const nx = x + lx,
+                                            nz = z + lz,
+                                            ny = height + ly;
+                                        if (
+                                            nx >= 0 &&
+                                            nx < CHUNK_SIZE &&
+                                            nz >= 0 &&
+                                            nz < CHUNK_SIZE &&
+                                            ny < CHUNK_HEIGHT
+                                        ) {
+                                            const idx =
+                                                nx * CHUNK_HEIGHT * CHUNK_SIZE +
+                                                ny * CHUNK_SIZE +
+                                                nz;
+                                            if (data[idx] === 0) data[idx] = 4; // Using wood as leaves for inventory simplicity
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                return data;
+            }
+
+            function getBlock(wx, wy, wz) {
+                if (wy < 0 || wy >= CHUNK_HEIGHT) return 0;
+                const cx = Math.floor(wx / CHUNK_SIZE);
+                const cz = Math.floor(wz / CHUNK_SIZE);
+                const key = getChunkKey(cx, cz);
+                if (!chunks.has(key)) return 0;
+                const data = chunks.get(key).data;
+                const lx = ((wx % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+                const lz = ((wz % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+                return data[
+                    lx * CHUNK_HEIGHT * CHUNK_SIZE + wy * CHUNK_SIZE + lz
+                ];
+            }
+
+            function setBlock(wx, wy, wz, blockId) {
+                if (wy < 0 || wy >= CHUNK_HEIGHT) return;
+                const cx = Math.floor(wx / CHUNK_SIZE);
+                const cz = Math.floor(wz / CHUNK_SIZE);
+                const key = getChunkKey(cx, cz);
+                if (!chunks.has(key)) return;
+                const chunk = chunks.get(key);
+                const data = chunk.data;
+                const lx = ((wx % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+                const lz = ((wz % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+                data[lx * CHUNK_HEIGHT * CHUNK_SIZE + wy * CHUNK_SIZE + lz] =
+                    blockId;
+                buildChunkMesh(cx, cz);
+
+                // Rebuild neighbor if on edge
+                if (lx === 0) buildChunkMesh(cx - 1, cz);
+                if (lx === CHUNK_SIZE - 1) buildChunkMesh(cx + 1, cz);
+                if (lz === 0) buildChunkMesh(cx, cz - 1);
+                if (lz === CHUNK_SIZE - 1) buildChunkMesh(cx, cz + 1);
+            }
+
+            function buildChunkMesh(cx, cz) {
+                const key = getChunkKey(cx, cz);
+                const chunk = chunks.get(key);
+                if (!chunk) return;
+
+                if (chunk.mesh) {
+                    scene.remove(chunk.mesh);
+                    chunk.mesh.geometry.dispose();
+                }
+
+                const blockMeshes = [];
+                const data = chunk.data;
+
+                for (let x = 0; x < CHUNK_SIZE; x++) {
+                    for (let y = 0; y < CHUNK_HEIGHT; y++) {
+                        for (let z = 0; z < CHUNK_SIZE; z++) {
+                            const blockId =
+                                data[
+                                    x * CHUNK_HEIGHT * CHUNK_SIZE +
+                                        y * CHUNK_SIZE +
+                                        z
+                                ];
+                            if (blockId === 0) continue;
+
+                            // Check neighbors (Culling)
+                            const wx = cx * CHUNK_SIZE + x;
+                            const wz = cz * CHUNK_SIZE + z;
+
+                            const nxp = getBlock(wx + 1, y, wz);
+                            const nxn = getBlock(wx - 1, y, wz);
+                            const nyp = getBlock(wx, y + 1, wz);
+                            const nyn = getBlock(wx, y - 1, wz);
+                            const nzp = getBlock(wx, y, wz + 1);
+                            const nzn = getBlock(wx, y, wz - 1);
+
+                            if (nxp && nxn && nyp && nyn && nzp && nzn)
+                                continue;
+
+                            const mat = new THREE.MeshLambertMaterial({
+                                color: BLOCK_TYPES[blockId].color,
+                            });
+                            const mesh = new THREE.Mesh(geometry, mat);
+                            mesh.position.set(wx, y, wz);
+                            blockMeshes.push(mesh);
+                        }
+                    }
+                }
+
+                if (blockMeshes.length === 0) return;
+
+                const merged = THREE.BufferGeometryUtils.mergeBufferGeometries(
+                    blockMeshes.map((m) =>
+                        m.geometry
+                            .clone()
+                            .applyMatrix4(
+                                new THREE.Matrix4().setPosition(m.position),
+                            ),
+                    ),
+                );
+                // Re-use material array based on groups if needed, but simple single material for now:
+                // Actually, merging loses multi-material easily. Let's just add them to a Group or InstancedMesh.
+                // Since performance is key, let's do InstancedMesh per chunk per block type.
+            }
+
+            // Better approach for merging without losing colors:
+            function buildChunkMesh(cx, cz) {
+                const key = getChunkKey(cx, cz);
+                const chunk = chunks.get(key);
+                if (!chunk) return;
+
+                if (chunk.meshes) {
+                    chunk.meshes.forEach((m) => {
+                        scene.remove(m);
+                        m.geometry.dispose();
+                    });
+                }
+                chunk.meshes = [];
+
+                const data = chunk.data;
+                const instances = {};
+
+                for (let x = 0; x < CHUNK_SIZE; x++) {
+                    for (let y = 0; y < CHUNK_HEIGHT; y++) {
+                        for (let z = 0; z < CHUNK_SIZE; z++) {
+                            const blockId =
+                                data[
+                                    x * CHUNK_HEIGHT * CHUNK_SIZE +
+                                        y * CHUNK_SIZE +
+                                        z
+                                ];
+                            if (blockId === 0) continue;
+
+                            const wx = cx * CHUNK_SIZE + x;
+                            const wz = cz * CHUNK_SIZE + z;
+
+                            // Culling
+                            const nxp = getBlock(wx + 1, y, wz);
+                            const nxn = getBlock(wx - 1, y, wz);
+                            const nyp = getBlock(wx, y + 1, wz);
+                            const nyn = getBlock(wx, y - 1, wz);
+                            const nzp = getBlock(wx, y, wz + 1);
+                            const nzn = getBlock(wx, y, wz - 1);
+
+                            if (nxp && nxn && nyp && nyn && nzp && nzn)
+                                continue;
+
+                            if (!instances[blockId]) instances[blockId] = [];
+                            instances[blockId].push(
+                                new THREE.Vector3(wx, y, wz),
+                            );
+                        }
+                    }
+                }
+
+                const dummy = new THREE.Object3D();
+                for (const blockId in instances) {
+                    const mats = new THREE.MeshLambertMaterial({
+                        color: BLOCK_TYPES[blockId].color,
+                    });
+                    const instMesh = new THREE.InstancedMesh(
+                        geometry,
+                        mats,
+                        instances[blockId].length,
+                    );
+                    instances[blockId].forEach((pos, i) => {
+                        dummy.position.copy(pos);
+                        dummy.updateMatrix();
+                        instMesh.setMatrixAt(i, dummy.matrix);
+                    });
+                    scene.add(instMesh);
+                    chunk.meshes.push(instMesh);
+                }
+            }
+
+            function updateChunks() {
+                const cx = Math.floor(player.position.x / CHUNK_SIZE);
+                const cz = Math.floor(player.position.z / CHUNK_SIZE);
+
+                const neededChunks = new Set();
+                for (let x = -RENDER_DISTANCE; x <= RENDER_DISTANCE; x++) {
+                    for (let z = -RENDER_DISTANCE; z <= RENDER_DISTANCE; z++) {
+                        neededChunks.add(getChunkKey(cx + x, cz + z));
+                    }
+                }
+
+                // Create missing chunks
+                neededChunks.forEach((key) => {
+                    if (!chunks.has(key)) {
+                        const [x, z] = key.split(",").map(Number);
+                        chunks.set(key, {
+                            data: generateChunkData(x, z),
+                            meshes: [],
+                        });
+                        buildChunkMesh(x, z);
+                    }
+                });
+
+                // Unload far chunks
+                for (const [key, chunk] of chunks.entries()) {
+                    if (!neededChunks.has(key)) {
+                        chunk.meshes.forEach((m) => {
+                            scene.remove(m);
+                            m.geometry.dispose();
+                            m.material.dispose();
+                        });
+                        chunks.delete(key);
+                    }
+                }
+            }
+
+            // --- RAYCASTING ---
+            const raycaster = new THREE.Raycaster();
+            raycaster.far = 6;
+
+            function getRayTarget() {
+                raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+                const origin = raycaster.ray.origin;
+                const dir = raycaster.ray.direction;
+
+                let t = 0;
+                const step = 0.05;
+                const maxDist = 6;
+                let prevX, prevY, prevZ;
+
+                while (t < maxDist) {
+                    const px = origin.x + dir.x * t;
+                    const py = origin.y + dir.y * t;
+                    const pz = origin.z + dir.z * t;
+
+                    const bx = Math.floor(px),
+                        by = Math.floor(py),
+                        bz = Math.floor(pz);
+
+                    const block = getBlock(bx, by, bz);
+                    if (block !== 0) {
+                        return {
+                            breakPos: new THREE.Vector3(bx, by, bz),
+                            placePos: new THREE.Vector3(prevX, prevY, prevZ),
+                            blockId: block,
+                        };
+                    }
+
+                    prevX = bx;
+                    prevY = by;
+                    prevZ = bz;
+                    t += step;
+                }
+                return null;
+            }
+
+            // --- DROPS & PICKUP ---
+            function spawnDrop(wx, wy, wz, blockId) {
+                const mat = new THREE.MeshLambertMaterial({
+                    color: BLOCK_TYPES[blockId].color,
+                });
+                const mesh = new THREE.Mesh(
+                    new THREE.BoxGeometry(0.3, 0.3, 0.3),
+                    mat,
+                );
+                mesh.position.set(wx + 0.5, wy + 0.5, wz + 0.5);
+                scene.add(mesh);
+                drops.push({
+                    mesh: mesh,
+                    velocity: new THREE.Vector3(
+                        (Math.random() - 0.5) * 2,
+                        4,
+                        (Math.random() - 0.5) * 2,
+                    ),
+                    blockId: blockId,
+                    lifetime: 60,
+                });
+            }
+
+            function updateDrops(dt) {
+                for (let i = drops.length - 1; i >= 0; i--) {
+                    const drop = drops[i];
+
+                    // Physics
+                    drop.velocity.y -= GRAVITY * dt;
+                    drop.mesh.position.addScaledVector(drop.velocity, dt);
+                    drop.mesh.rotation.x += dt * 2;
+                    drop.mesh.rotation.y += dt * 3;
+
+                    // Ground collision
+                    const floor = getBlock(
+                        Math.floor(drop.mesh.position.x),
+                        Math.floor(drop.mesh.position.y - 0.15),
+                        Math.floor(drop.mesh.position.z),
+                    );
+                    if (floor !== 0 && drop.velocity.y < 0) {
+                        drop.mesh.position.y =
+                            Math.floor(drop.mesh.position.y) + 1 + 0.15;
+                        drop.velocity.y *= -0.3; // Bounce
+                        if (Math.abs(drop.velocity.y) < 0.5)
+                            drop.velocity.y = 0;
+                    }
+
+                    // Pickup
+                    const dist = drop.mesh.position.distanceTo(player.position);
+                    if (dist < PICKUP_RANGE) {
+                        // Magnetic effect
+                        const dir = new THREE.Vector3()
+                            .subVectors(player.position, drop.mesh.position)
+                            .normalize();
+                        drop.mesh.position.addScaledVector(dir, 5 * dt);
+
+                        if (dist < 0.5) {
+                            inventory[drop.blockId]++;
+                            updateUI();
+                            scene.remove(drop.mesh);
+                            drops.splice(i, 1);
+                            continue;
+                        }
+                    }
+
+                    // Lifetime
+                    drop.lifetime -= dt;
+                    if (drop.lifetime <= 0) {
+                        scene.remove(drop.mesh);
+                        drops.splice(i, 1);
+                    }
+                }
+            }
+
+            // --- PLAYER PHYSICS & COLLISION ---
+            const keys = {
+                w: false,
+                a: false,
+                s: false,
+                d: false,
+                space: false,
+            };
+
+            function isColliding(pos) {
+                // Check 8 points around player's feet and head
+                for (let y = 0; y < Math.ceil(PLAYER_HEIGHT); y++) {
+                    for (let x = -1; x <= 1; x += 2) {
+                        for (let z = -1; z <= 1; z += 2) {
+                            const cx = Math.floor(pos.x + x * PLAYER_RADIUS);
+                            const cy = Math.floor(
+                                pos.y - PLAYER_HEIGHT + 0.1 + y,
+                            );
+                            const cz = Math.floor(pos.z + z * PLAYER_RADIUS);
+                            if (getBlock(cx, cy, cz) !== 0) return true;
+                        }
+                    }
+                }
+                return false;
+            }
+
+            function updatePlayer(dt) {
+                // Direction
+                const forward = new THREE.Vector3(
+                    -Math.sin(player.yaw),
+                    0,
+                    -Math.cos(player.yaw),
+                );
+                const right = new THREE.Vector3(
+                    Math.cos(player.yaw),
+                    0,
+                    -Math.sin(player.yaw),
+                );
+
+                let moveDir = new THREE.Vector3();
+                if (keys.w) moveDir.add(forward);
+                if (keys.s) moveDir.sub(forward);
+                if (keys.a) moveDir.sub(right);
+                if (keys.d) moveDir.add(right);
+                if (moveDir.length() > 0) moveDir.normalize();
+
+                const speed = 5;
+                player.velocity.x = moveDir.x * speed;
+                player.velocity.z = moveDir.z * speed;
+                player.velocity.y -= GRAVITY * dt;
+
+                if (keys.space && player.onGround) {
+                    player.velocity.y = JUMP_FORCE;
+                    player.onGround = false;
+                }
+
+                // Move X
+                const newX = player.position.clone();
+                newX.x += player.velocity.x * dt;
+                if (!isColliding(newX)) player.position.x = newX.x;
+
+                // Move Z
+                const newZ = player.position.clone();
+                newZ.z += player.velocity.z * dt;
+                if (!isColliding(newZ)) player.position.z = newZ.z;
+
+                // Move Y
+                const newY = player.position.clone();
+                newY.y += player.velocity.y * dt;
+                if (!isColliding(newY)) {
+                    player.position.y = newY.y;
+                    player.onGround = false;
+                } else {
+                    if (player.velocity.y < 0) player.onGround = true;
+                    player.velocity.y = 0;
+                }
+
+                // Fall out of world reset
+                if (player.position.y < -10) {
+                    player.position.set(8, 50, 8);
+                    player.velocity.set(0, 0, 0);
+                }
+
+                camera.position.copy(player.position);
+                camera.rotation.order = "YXZ";
+                camera.rotation.y = player.yaw;
+                camera.rotation.x = player.pitch;
+            }
+
+            // --- UI ---
+            function updateUI() {
+                const hotbar = document.getElementById("hotbar");
+                hotbar.innerHTML = "";
+                for (let i = 1; i <= 4; i++) {
+                    const slot = document.createElement("div");
+                    slot.className = `slot ${inventory.activeSlot === i ? "active" : ""}`;
+
+                    const blockDiv = document.createElement("div");
+                    blockDiv.className = "slot-block";
+                    blockDiv.style.backgroundColor =
+                        "#" +
+                        BLOCK_TYPES[i].color.toString(16).padStart(6, "0");
+
+                    const countDiv = document.createElement("div");
+                    countDiv.className = "slot-count";
+                    countDiv.innerText = inventory[i];
+
+                    const nameDiv = document.createElement("div");
+                    nameDiv.className = "slot-name";
+                    nameDiv.innerText = BLOCK_TYPES[i].name;
+
+                    slot.appendChild(blockDiv);
+                    slot.appendChild(countDiv);
+                    slot.appendChild(nameDiv);
+                    hotbar.appendChild(slot);
+                }
+            }
+
+            // --- INPUT ---
+            document.addEventListener("keydown", (e) => {
+                switch (e.code) {
+                    case "KeyW":
+                        keys.w = true;
+                        break;
+                    case "KeyA":
+                        keys.a = true;
+                        break;
+                    case "KeyS":
+                        keys.s = true;
+                        break;
+                    case "KeyD":
+                        keys.d = true;
+                        break;
+                    case "Space":
+                        keys.space = true;
+                        break;
+                    case "Digit1":
+                        inventory.activeSlot = 1;
+                        updateUI();
+                        break;
+                    case "Digit2":
+                        inventory.activeSlot = 2;
+                        updateUI();
+                        break;
+                    case "Digit3":
+                        inventory.activeSlot = 3;
+                        updateUI();
+                        break;
+                    case "Digit4":
+                        inventory.activeSlot = 4;
+                        updateUI();
+                        break;
+                }
+            });
+
+            document.addEventListener("keyup", (e) => {
+                switch (e.code) {
+                    case "KeyW":
+                        keys.w = false;
+                        break;
+                    case "KeyA":
+                        keys.a = false;
+                        break;
+                    case "KeyS":
+                        keys.s = false;
+                        break;
+                    case "KeyD":
+                        keys.d = false;
+                        break;
+                    case "Space":
+                        keys.space = false;
+                        break;
+                }
+            });
+
+            document.addEventListener("mousemove", (e) => {
+                if (document.pointerLockElement) {
+                    player.yaw -= e.movementX * 0.002;
+                    player.pitch -= e.movementY * 0.002;
+                    player.pitch = Math.max(
+                        -Math.PI / 2 + 0.1,
+                        Math.min(Math.PI / 2 - 0.1, player.pitch),
+                    );
+                }
+            });
+
+            document.addEventListener("mousedown", (e) => {
+                if (!document.pointerLockElement) {
+                    renderer.domElement.requestPointerLock();
+                    return;
+                }
+
+                const target = getRayTarget();
+                if (!target) return;
+
+                if (e.button === 0) {
+                    // Break
+                    setBlock(
+                        target.breakPos.x,
+                        target.breakPos.y,
+                        target.breakPos.z,
+                        0,
+                    );
+                    spawnDrop(
+                        target.breakPos.x,
+                        target.breakPos.y,
+                        target.breakPos.z,
+                        target.blockId,
+                    );
+                } else if (e.button === 2) {
+                    // Place
+                    const blockId = inventory.activeSlot;
+                    if (inventory[blockId] > 0 && target.placePos) {
+                        // Prevent placing inside player
+                        const pp = player.position;
+                        const fp = target.placePos;
+                        if (
+                            !(
+                                Math.floor(pp.x) === fp.x &&
+                                (Math.floor(pp.y) === fp.y ||
+                                    Math.floor(pp.y - 1) === fp.y ||
+                                    Math.floor(pp.y - 2) === fp.y) &&
+                                Math.floor(pp.z) === fp.z
+                            )
+                        ) {
+                            setBlock(fp.x, fp.y, fp.z, blockId);
+                            inventory[blockId]--;
+                            updateUI();
+                        }
+                    }
+                }
+            });
+
+            document.addEventListener("contextmenu", (e) => e.preventDefault());
+
+            // --- INIT & LOOP ---
+            document
+                .getElementById("start-screen")
+                .addEventListener("click", () => {
+                    renderer.domElement.requestPointerLock();
+                    document.getElementById("start-screen").style.display =
+                        "none";
+                });
+
+            // Initial Terrain
+            updateChunks();
+
+            // Force spawn player on ground safely
+            for (let y = CHUNK_HEIGHT - 1; y >= 0; y--) {
+                if (getBlock(8, y, 8) !== 0) {
+                    player.position.y = y + 1 + PLAYER_HEIGHT;
+                    break;
+                }
+            }
+
+            let lastTime = performance.now();
+            let chunkUpdateTimer = 0;
+
+            function animate(time) {
+                requestAnimationFrame(animate);
+                const dt = Math.min((time - lastTime) / 1000, 0.1);
+                lastTime = time;
+
+                chunkUpdateTimer += dt;
+                if (chunkUpdateTimer > 1) {
+                    updateChunks();
+                    chunkUpdateTimer = 0;
+                }
+
+                updatePlayer(dt);
+                updateDrops(dt);
+
+                renderer.render(scene, camera);
+            }
+
+            updateUI();
+            animate(performance.now());
+
+            window.addEventListener("resize", () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+        </script>
+    </body>
+</html>

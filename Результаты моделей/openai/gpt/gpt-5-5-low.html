@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Voxel Sandbox</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #83bce8; font-family: system-ui, -apple-system, Segoe UI, sans-serif; }
+    canvas { display: block; width: 100vw; height: 100vh; }
+    #hud { position: fixed; inset: 0; pointer-events: none; color: white; text-shadow: 0 2px 4px #0008; }
+    #cross { position: absolute; left: 50%; top: 50%; width: 18px; height: 18px; transform: translate(-50%, -50%); }
+    #cross:before, #cross:after { content: ""; position: absolute; background: #fff; box-shadow: 0 0 2px #000; }
+    #cross:before { left: 8px; top: 1px; width: 2px; height: 16px; }
+    #cross:after { left: 1px; top: 8px; width: 16px; height: 2px; }
+    #hotbar { position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%); display: flex; gap: 8px; }
+    .slot { width: 68px; height: 58px; border: 2px solid #ffffff88; background: #1119; border-radius: 6px; display: grid; grid-template-rows: 1fr auto; align-items: center; justify-items: center; font-weight: 700; }
+    .slot.active { border-color: #fff; background: #263246cc; box-shadow: 0 0 0 3px #0005; }
+    .swatch { width: 26px; height: 26px; border-radius: 4px; border: 2px solid #0005; margin-top: 6px; }
+    .label { width: 100%; display: flex; justify-content: space-between; box-sizing: border-box; padding: 0 7px 5px; font-size: 13px; }
+    #tip { position: absolute; left: 18px; top: 14px; max-width: 440px; line-height: 1.4; font-size: 14px; }
+    #blocker { position: fixed; inset: 0; display: grid; place-items: center; background: linear-gradient(#87c8f0, #78a85e); color: white; text-align: center; cursor: pointer; }
+    #blocker > div { max-width: 520px; padding: 28px; background: #101820cc; border: 1px solid #ffffff33; border-radius: 8px; }
+    #blocker h1 { margin: 0 0 12px; font-size: 36px; }
+  </style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hud">
+  <div id="tip">WASD move, Space jump, mouse look. LMB mines blocks into drops, RMB places selected blocks. 1-4 selects hotbar.</div>
+  <div id="cross"></div>
+  <div id="hotbar"></div>
+</div>
+<div id="blocker"><div><h1>Voxel Sandbox</h1><p>Click to lock the cursor and enter the world.</p><p>Gather blocks, pick up drops, then build with the selected hotbar slot.</p></div></div>
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const gl = canvas.getContext('webgl', { antialias: true });
+  if (!gl) { document.body.innerHTML = 'WebGL is required.'; return; }
+
+  const CHUNK = 16, RADIUS = 2, MAX_H = 30, PLAYER_H = 1.75, PLAYER_R = 0.28;
+  const types = [
+    null,
+    { name: 'Grass', color: [0.32, 0.68, 0.25] },
+    { name: 'Dirt', color: [0.47, 0.31, 0.17] },
+    { name: 'Stone', color: [0.48, 0.50, 0.52] },
+    { name: 'Sand', color: [0.78, 0.69, 0.38] }
+  ];
+  const inv = { 1: 0, 2: 0, 3: 0, 4: 0 };
+  let active = 1, chunks = new Map(), drops = [], keys = {}, pointer = false, hit = null;
+  const player = { pos: [0, 24, 0], vel: [0, 0, 0], yaw: 0, pitch: 0, grounded: false };
+
+  const vsrc = `attribute vec3 p;attribute vec3 c;uniform mat4 m;varying vec3 v;void main(){v=c;gl_Position=m*vec4(p,1.0);}`;
+  const fsrc = `precision mediump float;varying vec3 v;void main(){gl_FragColor=vec4(v,1.0);}`;
+  function shader(t, s) { const o = gl.createShader(t); gl.shaderSource(o, s); gl.compileShader(o); return o; }
+  const prog = gl.createProgram();
+  gl.attachShader(prog, shader(gl.VERTEX_SHADER, vsrc)); gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, fsrc)); gl.linkProgram(prog); gl.useProgram(prog);
+  const locP = gl.getAttribLocation(prog, 'p'), locC = gl.getAttribLocation(prog, 'c'), locM = gl.getUniformLocation(prog, 'm');
+  const buf = gl.createBuffer();
+
+  const key = (x, y, z) => `${x},${y},${z}`, ckey = (cx, cz) => `${cx},${cz}`;
+  const floorDiv = (n, d) => Math.floor(n / d);
+  const fract = n => n - Math.floor(n);
+  const hash = (x, z) => fract(Math.sin(x * 127.1 + z * 311.7) * 43758.5453);
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const smooth = t => t * t * (3 - 2 * t);
+  function noise(x, z) {
+    const ix = Math.floor(x), iz = Math.floor(z), fx = smooth(fract(x)), fz = smooth(fract(z));
+    return lerp(lerp(hash(ix, iz), hash(ix + 1, iz), fx), lerp(hash(ix, iz + 1), hash(ix + 1, iz + 1), fx), fz);
+  }
+  function heightAt(x, z) {
+    const plains = noise(x * 0.035, z * 0.035);
+    const hills = noise(x * 0.09 + 80, z * 0.09 - 30);
+    const h = plains < 0.48 ? 8 + plains * 3 : 10 + hills * 13 + plains * 4;
+    return Math.floor(h);
+  }
+  function blockAt(x, y, z) {
+    const cx = floorDiv(x, CHUNK), cz = floorDiv(z, CHUNK), ch = chunks.get(ckey(cx, cz));
+    if (ch && ch.blocks.has(key(x, y, z))) return ch.blocks.get(key(x, y, z));
+    return 0;
+  }
+  function setBlock(x, y, z, t) {
+    const cx = floorDiv(x, CHUNK), cz = floorDiv(z, CHUNK);
+    ensureChunk(cx, cz);
+    const ch = chunks.get(ckey(cx, cz)), k = key(x, y, z);
+    if (t) ch.blocks.set(k, t); else ch.blocks.delete(k);
+    dirtyAround(cx, cz);
+  }
+  function dirtyAround(cx, cz) {
+    for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+      const ch = chunks.get(ckey(cx + dx, cz + dz)); if (ch) ch.dirty = true;
+    }
+  }
+  function ensureChunk(cx, cz) {
+    const id = ckey(cx, cz); if (chunks.has(id)) return;
+    const blocks = new Map();
+    for (let lx = 0; lx < CHUNK; lx++) for (let lz = 0; lz < CHUNK; lz++) {
+      const x = cx * CHUNK + lx, z = cz * CHUNK + lz, h = heightAt(x, z);
+      for (let y = 0; y <= h; y++) {
+        let t = y === h ? (h < 10 ? 4 : 1) : y > h - 4 ? 2 : 3;
+        blocks.set(key(x, y, z), t);
+      }
+    }
+    chunks.set(id, { cx, cz, blocks, verts: new Float32Array(), count: 0, dirty: true });
+  }
+  const faces = [
+    [[1,0,0], [[1,0,0],[1,1,0],[1,1,1],[1,0,1]], .86], [[-1,0,0], [[0,0,1],[0,1,1],[0,1,0],[0,0,0]], .72],
+    [[0,1,0], [[0,1,1],[1,1,1],[1,1,0],[0,1,0]], 1.08], [[0,-1,0], [[0,0,0],[1,0,0],[1,0,1],[0,0,1]], .55],
+    [[0,0,1], [[1,0,1],[1,1,1],[0,1,1],[0,0,1]], .8], [[0,0,-1], [[0,0,0],[0,1,0],[1,1,0],[1,0,0]], .68]
+  ];
+  function rebuild(ch) {
+    const out = [];
+    for (const [ks, t] of ch.blocks) {
+      const [x, y, z] = ks.split(',').map(Number), base = types[t].color;
+      for (const [n, q, shade] of faces) if (!blockAt(x + n[0], y + n[1], z + n[2])) {
+        const idx = [0,1,2,0,2,3];
+        for (const i of idx) {
+          const v = q[i]; out.push(x + v[0], y + v[1], z + v[2], base[0] * shade, base[1] * shade, base[2] * shade);
+        }
+      }
+    }
+    ch.verts = new Float32Array(out); ch.count = out.length / 6; ch.dirty = false;
+  }
+  function updateChunks() {
+    const pcx = floorDiv(player.pos[0], CHUNK), pcz = floorDiv(player.pos[2], CHUNK);
+    for (let dx = -RADIUS; dx <= RADIUS; dx++) for (let dz = -RADIUS; dz <= RADIUS; dz++) ensureChunk(pcx + dx, pcz + dz);
+    for (const [id, ch] of chunks) {
+      if (Math.abs(ch.cx - pcx) > RADIUS + 1 || Math.abs(ch.cz - pcz) > RADIUS + 1) chunks.delete(id);
+      else if (ch.dirty) rebuild(ch);
+    }
+  }
+
+  function solidAABB(px, py, pz) {
+    for (let x = Math.floor(px - PLAYER_R); x <= Math.floor(px + PLAYER_R); x++)
+    for (let y = Math.floor(py); y <= Math.floor(py + PLAYER_H); y++)
+    for (let z = Math.floor(pz - PLAYER_R); z <= Math.floor(pz + PLAYER_R); z++)
+      if (blockAt(x, y, z)) return true;
+    return false;
+  }
+  function blockWouldHitPlayer(x, y, z) {
+    return x < player.pos[0] + PLAYER_R && x + 1 > player.pos[0] - PLAYER_R &&
+      z < player.pos[2] + PLAYER_R && z + 1 > player.pos[2] - PLAYER_R &&
+      y < player.pos[1] + PLAYER_H && y + 1 > player.pos[1];
+  }
+  function moveAxis(axis, amount) {
+    player.pos[axis] += amount;
+    if (solidAABB(...player.pos)) {
+      player.pos[axis] -= amount;
+      player.vel[axis] = 0;
+      if (axis === 1 && amount < 0) player.grounded = true;
+    }
+  }
+  function forward() { return [Math.sin(player.yaw), 0, Math.cos(player.yaw)]; }
+  function viewDir() {
+    const cp = Math.cos(player.pitch);
+    return [Math.sin(player.yaw) * cp, Math.sin(player.pitch), Math.cos(player.yaw) * cp];
+  }
+  function raycast(maxD = 6) {
+    const o = [player.pos[0], player.pos[1] + 1.55, player.pos[2]], d = viewDir();
+    let last = null;
+    for (let t = 0; t < maxD; t += 0.045) {
+      const x = Math.floor(o[0] + d[0] * t), y = Math.floor(o[1] + d[1] * t), z = Math.floor(o[2] + d[2] * t);
+      if (!last || x !== last.x || y !== last.y || z !== last.z) {
+        if (blockAt(x, y, z)) return { x, y, z, prev: last };
+        last = { x, y, z };
+      }
+    }
+    return null;
+  }
+  function spawnDrop(x, y, z, type) {
+    drops.push({ p: [x + .5, y + .55, z + .5], v: [(Math.random()-.5)*1.6, 2.5, (Math.random()-.5)*1.6], type, spin: Math.random()*6 });
+  }
+  function updateDrops(dt) {
+    for (const d of drops) {
+      d.v[1] -= 9.8 * dt; d.p[0] += d.v[0] * dt; d.p[1] += d.v[1] * dt; d.p[2] += d.v[2] * dt; d.spin += dt * 5;
+      const bx = Math.floor(d.p[0]), by = Math.floor(d.p[1] - .18), bz = Math.floor(d.p[2]);
+      if (blockAt(bx, by, bz) && d.v[1] < 0) { d.p[1] = by + 1.2; d.v[1] *= -.22; d.v[0] *= .72; d.v[2] *= .72; }
+    }
+    drops = drops.filter(d => {
+      const dx = d.p[0]-player.pos[0], dy = d.p[1]-(player.pos[1]+.9), dz = d.p[2]-player.pos[2];
+      if (dx*dx + dy*dy + dz*dz < 2.0) { inv[d.type]++; renderHotbar(); return false; }
+      return true;
+    });
+  }
+
+  function mat4Perspective(fov, asp, near, far) {
+    const f = 1 / Math.tan(fov / 2), nf = 1 / (near - far);
+    return [f/asp,0,0,0, 0,f,0,0, 0,0,(far+near)*nf,-1, 0,0,2*far*near*nf,0];
+  }
+  function mat4Look(pos) {
+    const cy = Math.cos(player.yaw), sy = Math.sin(player.yaw), cp = Math.cos(player.pitch), sp = Math.sin(player.pitch);
+    const x = [cy,0,-sy], y = [-sy*sp,cp,-cy*sp], z = [-sy*cp,-sp,-cy*cp], e = [pos[0], pos[1]+1.55, pos[2]];
+    return [x[0],y[0],z[0],0, x[1],y[1],z[1],0, x[2],y[2],z[2],0, -dot(x,e),-dot(y,e),-dot(z,e),1];
+  }
+  const dot = (a,b) => a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+  function mul(a,b){const o=Array(16).fill(0);for(let c=0;c<4;c++)for(let r=0;r<4;r++)for(let k=0;k<4;k++)o[c*4+r]+=a[k*4+r]*b[c*4+k];return o;}
+  function addCube(out, x, y, z, s, type, rot) {
+    const base = types[type].color, co = Math.cos(rot), si = Math.sin(rot);
+    for (const [, q, shade] of faces) for (const i of [0,1,2,0,2,3]) {
+      let vx = (q[i][0]-.5)*s, vy = (q[i][1]-.5)*s, vz = (q[i][2]-.5)*s;
+      const rx = vx*co - vz*si, rz = vx*si + vz*co;
+      out.push(x+rx, y+vy, z+rz, base[0]*shade, base[1]*shade, base[2]*shade);
+    }
+  }
+  function drawVerts(arr, count, mvp) {
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.bufferData(gl.ARRAY_BUFFER, arr, gl.DYNAMIC_DRAW);
+    gl.vertexAttribPointer(locP, 3, gl.FLOAT, false, 24, 0); gl.enableVertexAttribArray(locP);
+    gl.vertexAttribPointer(locC, 3, gl.FLOAT, false, 24, 12); gl.enableVertexAttribArray(locC);
+    gl.uniformMatrix4fv(locM, false, new Float32Array(mvp)); gl.drawArrays(gl.TRIANGLES, 0, count);
+  }
+  function renderHotbar() {
+    const el = document.getElementById('hotbar'); el.innerHTML = '';
+    [1,2,3,4].forEach(t => {
+      const s = document.createElement('div'); s.className = 'slot' + (t === active ? ' active' : '');
+      s.innerHTML = `<div class="swatch" style="background:rgb(${types[t].color.map(v=>Math.floor(v*255)).join(',')})"></div><div class="label"><span>${t}</span><span>${inv[t]}</span></div>`;
+      el.appendChild(s);
+    });
+  }
+  function resize() { canvas.width = innerWidth * devicePixelRatio; canvas.height = innerHeight * devicePixelRatio; gl.viewport(0, 0, canvas.width, canvas.height); }
+  addEventListener('resize', resize); resize(); renderHotbar();
+
+  document.getElementById('blocker').onclick = () => canvas.requestPointerLock();
+  document.addEventListener('pointerlockchange', () => { pointer = document.pointerLockElement === canvas; document.getElementById('blocker').style.display = pointer ? 'none' : 'grid'; });
+  document.addEventListener('mousemove', e => { if (!pointer) return; player.yaw -= e.movementX * .0025; player.pitch = Math.max(-1.45, Math.min(1.45, player.pitch - e.movementY * .0025)); });
+  document.addEventListener('keydown', e => { keys[e.code] = true; if (/Digit[1-4]/.test(e.code)) { active = +e.code.slice(5); renderHotbar(); } });
+  document.addEventListener('keyup', e => keys[e.code] = false);
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
+  canvas.addEventListener('mousedown', e => {
+    if (!pointer) return;
+    hit = raycast();
+    if (e.button === 0 && hit) { const t = blockAt(hit.x, hit.y, hit.z); setBlock(hit.x, hit.y, hit.z, 0); spawnDrop(hit.x, hit.y, hit.z, t); }
+    if (e.button === 2 && hit && hit.prev && inv[active] > 0) {
+      const p = hit.prev;
+      if (!blockAt(p.x, p.y, p.z) && !blockWouldHitPlayer(p.x, p.y, p.z)) { setBlock(p.x, p.y, p.z, active); inv[active]--; renderHotbar(); }
+    }
+  });
+
+  let last = performance.now();
+  function tick(now) {
+    const dt = Math.min(.033, (now - last) / 1000); last = now;
+    updateChunks();
+    const f = forward(), r = [f[2], 0, -f[0]], speed = keys.ShiftLeft ? 7 : 4.6;
+    let mx = 0, mz = 0;
+    if (keys.KeyW) { mx += f[0]; mz += f[2]; } if (keys.KeyS) { mx -= f[0]; mz -= f[2]; }
+    if (keys.KeyD) { mx += r[0]; mz += r[2]; } if (keys.KeyA) { mx -= r[0]; mz -= r[2]; }
+    const len = Math.hypot(mx, mz) || 1; player.vel[0] = mx / len * speed; player.vel[2] = mz / len * speed;
+    if (keys.Space && player.grounded) { player.vel[1] = 6.2; player.grounded = false; }
+    player.vel[1] -= 18 * dt; player.grounded = false;
+    moveAxis(0, player.vel[0] * dt); moveAxis(2, player.vel[2] * dt); moveAxis(1, player.vel[1] * dt);
+    if (player.pos[1] < -20) player.pos = [0, 30, 0];
+    updateDrops(dt);
+    hit = raycast();
+
+    gl.clearColor(.50, .74, .90, 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); gl.enable(gl.DEPTH_TEST); gl.enable(gl.CULL_FACE);
+    const mvp = mul(mat4Perspective(1.05, canvas.width / canvas.height, .05, 250), mat4Look(player.pos));
+    for (const ch of chunks.values()) if (ch.count) drawVerts(ch.verts, ch.count, mvp);
+    const dv = []; drops.forEach(d => addCube(dv, d.p[0], d.p[1], d.p[2], .32, d.type, d.spin));
+    if (dv.length) drawVerts(new Float32Array(dv), dv.length / 6, mvp);
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
