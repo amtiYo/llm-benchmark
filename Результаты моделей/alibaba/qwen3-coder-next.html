@@ -236,6 +236,7 @@
             const objects = []; // Array for raycasting
             const drops = []; // Array of spinning items
             const playerPosition = new THREE.Vector3(0, 30, 0);
+            const worldBlocks = new Map(); // Key: "x,y,z", Value: { type, mesh, position }
 
             // UI Elements
             const blocker = document.getElementById("blocker");
@@ -330,7 +331,6 @@
                 const key = `${chunkX},${chunkZ}`;
                 if (chunks.has(key)) return;
 
-                const geometry = new THREE.BoxGeometry(1, 1, 1);
                 const material = new THREE.MeshLambertMaterial({
                     transparent: true,
                     opacity: 0.9,
@@ -430,9 +430,6 @@
                 // For this demo, we will just raycast against the Chunk Mesh, but we need specific blocks.
                 // Alternative approach: Simple Grid Map for collision/interaction.
             }
-
-            // Simplified Block Storage for Interaction
-            const worldBlocks = new Map(); // Key: "x,y,z", Value: { type, mesh, position }
 
             function placeBlock(
                 pos,

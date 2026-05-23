@@ -16,10 +16,18 @@
 <div id="crosshair"></div>
 
 <!-- всё JS-наполнение — в одном модульном скрипте -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.159.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm/"
+  }
+}
+</script>
 <script type="module">
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.159.0/build/three.module.js';
 import { PointerLockControls } from 'https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm/controls/PointerLockControls.js';
-import SimplexNoise from 'https://cdn.jsdelivr.net/npm/simplex-noise@4/dist/esm/simplex-noise.js';
+import { createNoise2D } from 'https://cdn.jsdelivr.net/npm/simplex-noise@4.0.1/dist/esm/simplex-noise.js';
 
 /* === базовая сцена === */
 const scene = new THREE.Scene();
@@ -40,7 +48,7 @@ controls.getObject().position.set(0, 20, 0);
 scene.add(controls.getObject());
 
 /* шум для высот */
-const noise = new SimplexNoise();
+const noise = { noise2D: createNoise2D() };
 
 /* материалы */
 const materials = {

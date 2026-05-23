@@ -622,9 +622,11 @@
                 const chunk = chunks.get(chunkKey);
                 if (!chunk) return;
                 scene.remove(chunk.mesh);
+                const [chunkX, chunkZ] = chunkKey.split(",").map(Number);
                 chunk.mesh = buildChunkMesh(
                     chunk.blocks,
-                    ...chunkKey.split(",").map(Number),
+                    chunkX,
+                    chunkZ,
                 );
                 scene.add(chunk.mesh);
             }
@@ -674,7 +676,7 @@
                     slot.dataset.index = i;
                     const preview = document.createElement("div");
                     preview.className = "slot-preview";
-                    if (i < BLOCK.COUNT) {
+                    if (i < BLOCK.COUNT - 1) {
                         preview.style.backgroundColor =
                             "#" +
                             BLOCK_COLORS[i + 1].toString(16).padStart(6, "0");
@@ -684,7 +686,7 @@
                     const count = document.createElement("div");
                     count.className = "slot-count";
                     count.id = `slot-count-${i}`;
-                    if (i < BLOCK.COUNT)
+                    if (i < BLOCK.COUNT - 1)
                         count.textContent = inventory[i + 1] || "";
                     slot.appendChild(preview);
                     slot.appendChild(count);
@@ -932,14 +934,13 @@
                     const blockZ = Math.floor(point.z - face.normal.z * 0.5);
                     const block = getBlockAt(blockX, blockY, blockZ);
                     if (block !== BLOCK.AIR) {
+                        const coords = getChunkCoordsFromWorld(blockX, blockZ);
                         targetBlock = {
                             x: blockX,
                             y: blockY,
                             z: blockZ,
                             face: face.normal,
-                            chunkKey: getChunkKey(
-                                ...getChunkCoordsFromWorld(blockX, blockZ),
-                            ),
+                            chunkKey: getChunkKey(coords.chunkX, coords.chunkZ),
                         };
                         highlightMesh.position.set(
                             blockX + 0.5,

@@ -37,10 +37,18 @@
   </div>
   <div id="ui"></div>
 
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/"
+    }
+  }
+  </script>
   <script type="module">
     import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js';
     import { PointerLockControls } from 'https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/controls/PointerLockControls.js';
-    import SimplexNoise from 'https://cdn.jsdelivr.net/npm/simplex-noise@4.0.0/simplex-noise.js';
+    import { createNoise2D } from 'https://cdn.jsdelivr.net/npm/simplex-noise@4.0.1/dist/esm/simplex-noise.js';
 
     /* ---------- CONSTANTS ---------- */
     const BLOCK_SIZE = 1;
@@ -79,7 +87,7 @@
     const raycaster = new THREE.Raycaster();
 
     /* ---------- NOISE ---------- */
-    const simplex = new SimplexNoise();
+    const simplex = { noise2D: createNoise2D() };
 
     /* ---------- BLOCK STORAGE ---------- */
     const blocks = new Map(); // key => {mesh, type}
@@ -301,13 +309,6 @@
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth,window.innerHeight);
     });
-  </script>
+</script>
 </body>
 </html>
-
-							<script>
-                            	
-							</script>
-                        </body>
-                        </html>
-                    

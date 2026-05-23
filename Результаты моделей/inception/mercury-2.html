@@ -19,10 +19,17 @@
 <meta charset="UTF-8">
 <title>3D Sandbox Demo</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<!-- Three.js (r152) -->
-<script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.152.2/examples/js/controls/PointerLockControls.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.152.2/examples/js/libs/perlin.js"></script>
+<!-- Three.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/PointerLockControls.js"></script>
+<script>
+const perlin = {
+  noise(x, y, z = 0) {
+    const value = Math.sin(x * 12.9898 + y * 78.233 + z * 37.719) * 43758.5453;
+    return (value - Math.floor(value)) * 2 - 1;
+  }
+};
+</script>
 <style>
   body { margin:0; overflow:hidden; font-family:Arial,Helvetica,sans-serif; }
   #ui { position:fixed; bottom:10px; left:50%; transform:translateX(-50%); display:flex; gap:5px; }
@@ -105,6 +112,7 @@ const BLOCK_ORDER = ['dirt','grass','stone']; // for UI order
    CHUNK MANAGEMENT
 -------------------------------------------------------------- */
 const chunks = new Map(); // key = `${cx},${cz}`
+const mouseDown = [false,false];
 
 function chunkKey(cx,cz){return `${cx},${cz}`;}
 
@@ -114,7 +122,7 @@ function createChunk(cx,cz){
   const chunkGroup = new THREE.Group();
   chunkGroup.position.set(cx*CHUNK_SIZE*BLOCK_SIZE,0,cz*CHUNK_SIZE*BLOCK_SIZE);
   for(let x=0;x<CHUNK_SIZE;x++){
-    for(let z=0;zCHCHUNK_SIZE;z++){
+    for(let z=0;z<CHUNK_SIZE;z++){
       const worldX = cx*CHUNK_SIZE + x;
       const worldZ = cz*CHUNK_SIZE + z;
       const height = Math.floor(perlin.noise(worldX*0.1,worldZ*0.1,0)*4)+4;
@@ -318,16 +326,8 @@ animate();
 /* --------------------------------------------------------------
    MOUSE STATE
 -------------------------------------------------------------- */
-const mouseDown = [false,false];
 document.addEventListener('mousedown',e=>{mouseDown[e.button]=true;});
 document.addEventListener('mouseup',e=>{mouseDown[e.button]=false;});
 </script>
 </body>
 </html>
-
-							<script>
-                            	
-							</script>
-                        </body>
-                        </html>
-                    

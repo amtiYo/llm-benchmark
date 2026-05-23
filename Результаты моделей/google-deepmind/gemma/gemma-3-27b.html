@@ -47,6 +47,11 @@ let player = {
 
 let drops = [];
 
+Math.noise ??= (x, z = 0) => {
+  const value = Math.sin(x * 12.9898 + z * 78.233) * 43758.5453;
+  return value - Math.floor(value);
+};
+
 // Inventory UI
 function updateInventoryUI() {
   inventoryDiv.innerHTML = '';
@@ -200,9 +205,9 @@ function render() {
           const height = chunk[x][z];
 
           for (let y = 0; y < height; y++) {
+            const worldY = y;
             const screenX = (worldX - cameraX) * (canvas.width / 2) / (BLOCK_SIZE * 5) + canvas.width / 2;
             const screenY = (worldY - cameraY) * (canvas.height / 2) / (BLOCK_SIZE * 5) + canvas.height / 2;
-            const worldY = y;
 
             if (screenX > -BLOCK_SIZE && screenX < canvas.width + BLOCK_SIZE && screenY > -BLOCK_SIZE && screenY < canvas.height + BLOCK_SIZE) {
               ctx.fillStyle = 'brown';
