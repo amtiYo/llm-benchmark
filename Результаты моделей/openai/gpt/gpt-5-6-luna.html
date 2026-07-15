@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Voxel Sandbox</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#87ceeb;font-family:system-ui,sans-serif}
+  canvas{display:block}
+  #crosshair{position:fixed;left:50%;top:50%;width:16px;height:16px;transform:translate(-50%,-50%);pointer-events:none;z-index:3}
+  #crosshair:before,#crosshair:after{content:"";position:absolute;background:white;box-shadow:0 0 2px #000}
+  #crosshair:before{width:2px;height:16px;left:7px}
+  #crosshair:after{width:16px;height:2px;top:7px}
+  #hud{position:fixed;inset:0;pointer-events:none;color:#fff;text-shadow:1px 1px 2px #000}
+  #help{position:absolute;top:12px;left:12px;background:#0008;padding:10px;border-radius:6px}
+  #status{position:absolute;top:12px;right:12px;background:#0008;padding:8px;border-radius:6px}
+  #hotbar{position:absolute;bottom:18px;left:50%;transform:translateX(-50%);display:flex;gap:5px}
+  .slot{width:66px;height:58px;background:#222b;border:2px solid #777;position:relative;text-align:center;border-radius:5px}
+  .slot.active{border-color:#fff;box-shadow:0 0 8px #fff}
+  .swatch{width:28px;height:28px;margin:5px auto 1px;border:1px solid #0008}
+  .count{font-size:13px}.key{position:absolute;top:1px;left:4px;font-size:11px;color:#ddd}
+  #start{position:fixed;inset:0;display:grid;place-items:center;background:#0008;color:#fff;z-index:5}
+  #start button{font-size:20px;padding:14px 24px;cursor:pointer}
+</style>
+</head>
+<body>
+<div id="start"><button>Click to Start</button></div>
+<div id="crosshair"></div>
+<div id="hud">
+  <div id="help">WASD move · Space jump · LMB mine · RMB place · 1–6 select</div>
+  <div id="status"></div>
+  <div id="hotbar"></div>
+</div>
+
+<script type="module">
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87ceeb);
+scene.fog = new THREE.Fog(0x87ceeb, 35, 115);
+
+const camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, .05, 180);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth,innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0xbde7ff,0x6b553d,2));
+const sun = new THREE.DirectionalLight(0xffffff,2.2);
+sun.position.set(40,80,25); sun.castShadow=true; scene.add(sun);
+
+const types = [
+  {name:"Grass", color:0x55a83d, count:Infinity},
+  {name:"Dirt", color:0x8b5a32, count:30},
+  {name:"Stone", color:0x777b82, count:20},
+  {name:"Wood", color:0x9a642f, count:12},
+  {name:"Leaves", color:0x267a36, count:8},
+  {name:"Sand", color:0xd8c078, count:10}
+];
+const materials = types.map(t=>new THREE.MeshLambertMaterial({color:t.color}));
+const cubeGeo = new THREE.BoxGeometry(1,1,1);
+
+const blocks = new Map();
+const meshes = new Map();
+const drops = [];
+const CHUNK = 16, RADIUS = 3;
+let generated = new Set();
+
+function key(x,y,z){return `${x},${y},${z}`}
+function ckey(x,z){return `${x},${z}`}
+function fract(n){return n-Math.floor(n)}
+function hash(x,z){
+  return fract(Math.sin(x*127.1+z*311.7)*43758.5453);
+}
+function smoothNoise(x,z){
+  const x0=Math.floor(x),z0=Math.floor(z), fx=x-x0,fz=z-z0;
+  const a=hash(x0,z0),b=hash(x0+1,z0),c=hash(x0,z0+1),d=hash(x0+1,z0+1);
+  const sx=fx*fx*(3-2*fx), sz=fz*fz*(3-2*fz);
+  return THREE.MathUtils.lerp(THREE.MathUtils.lerp(a,b,sx),THREE.MathUtils.lerp(c,d,sx),sz);
+}
+function heightAt(x,z){
+  const hills=smoothNoise(x*.045,z*.045)*12;
+  const detail=smoothNoise(x*.13+40,z*.13-20)*3;
+  const plains=smoothNoise(x*.012-80,z*.012+30);
+  return Math.max(1,Math.floor(4+hills*.7+detail+(plains<.36?-2:0)));
+}
+function addBlock(x,y,z,t){
+  const k=key(x,y,z);
+  if(blocks.has(k)) return;
+  blocks.set(k,t);
+  const m=new THREE.Mesh(cubeGeo,materials[t]);
+  m.position.set(x+.5,y+.5,z+.5);
+  m.castShadow=m.receiveShadow=true;
+  m.userData={x,y,z,t};
+  scene.add(m); meshes.set(k,m);
+}
+function removeBlock(x,y,z){
+  const k=key(x,y,z), m=meshes.get(k);
+  if(!blocks.has(k)) return;
+  blocks.delete(k); meshes.delete(k);
+  if(m)scene.remove(m);
+  spawnDrop(x+.5,y+.75,z+.5,blocks.get(k) ?? 1);
+}
+function generateChunk(cx,cz){
+  const ck=ckey(cx,cz); if(generated.has(ck))return;
+  generated.add(ck);
+  for(let x=cx*CHUNK;x<cx*CHUNK+CHUNK;x++)for(let z=cz*CHUNK;z<cz*CHUNK+CHUNK;z++){
+    const h=heightAt(x,z);
+    for(let y=0;y<=h;y++){
+      let t=y===h?0:y>h-3?1:2;
+      if(y===0)t=2;
+      addBlock(x,y,z,t);
+    }
+    if(hash(x+91,z-33)>.965 && h>5){
+      for(let y=1;y<4;y++)addBlock(x,h+y,z,3);
+      for(let dx=-2;dx<=2;dx++)for(let dz=-2;dz<=2;dz++)for(let dy=2;dy<=4;dy++)
+        if(Math.abs(dx)+Math.abs(dz)+(dy===4?1:0)<5)addBlock(x+dx,h+dy,z+dz,4);
+    }
+  }
+}
+function ensureWorld(){
+  const cx=Math.floor(player.position.x/CHUNK),cz=Math.floor(player.position.z/CHUNK);
+  for(let x=cx-RADIUS;x<=cx+RADIUS;x++)for(let z=cz-RADIUS;z<=cz+RADIUS;z++)generateChunk(x,z);
+}
+function solid(x,y,z){return blocks.has(key(Math.floor(x),Math.floor(y),Math.floor(z)))}
+function collides(pos){
+  const r=.28, minX=Math.floor(pos.x-r),maxX=Math.floor(pos.x+r);
+  const minY=Math.floor(pos.y),maxY=Math.floor(pos.y+1.75);
+  const minZ=Math.floor(pos.z-r),maxZ=Math.floor(pos.z+r);
+  for(let x=minX;x<=maxX;x++)for(let y=minY;y<=maxY;y++)for(let z=minZ;z<=maxZ;z++)
+    if(solid(x,y,z))return true;
+  return false;
+}
+
+const player=new THREE.Object3D();
+player.position.set(.5,heightAt(0,0)+1.05,.5);
+scene.add(player); player.add(camera); camera.position.y=0;
+let yaw=0,pitch=0,locked=false,vy=0,onGround=false;
+const keys={};
+addEventListener("keydown",e=>{keys[e.code]=true;if(/^Digit[1-6]$/.test(e.code))select(+e.code.slice(5)-1)});
+addEventListener("keyup",e=>keys[e.code]=false);
+document.addEventListener("mousemove",e=>{
+  if(!locked)return;
+  yaw-=e.movementX*.0022; pitch-=e.movementY*.0022;
+  pitch=THREE.MathUtils.clamp(pitch,-Math.PI/2+.01,Math.PI/2-.01);
+  player.rotation.y=yaw; camera.rotation.x=pitch;
+});
+const start=document.querySelector("#start");
+start.onclick=()=>{renderer.domElement.requestPointerLock();};
+document.addEventListener("pointerlockchange",()=>{locked=document.pointerLockElement===renderer.domElement;start.style.display=locked?"none":"grid"});
+renderer.domElement.addEventListener("mousedown",e=>{if(!locked)return;e.preventDefault();if(e.button===0)mine();if(e.button===2)place()});
+renderer.domElement.addEventListener("contextmenu",e=>e.preventDefault());
+
+function moveAxis(dx,dy,dz){
+  const p=player.position, old=p.clone();
+  p.x+=dx;if(collides(p))p.x=old.x;
+  p.z+=dz;if(collides(p))p.z=old.z;
+  p.y+=dy;
+  if(collides(p)){
+    p.y=old.y;
+    if(dy<0)onGround=true;
+    vy=0;
+  }else onGround=false;
+}
+function updatePlayer(dt){
+  const dir=new THREE.Vector3((keys.KeyD?1:0)-(keys.KeyA?1:0),0,(keys.KeyS?1:0)-(keys.KeyW?1:0));
+  if(dir.lengthSq())dir.normalize().applyAxisAngle(new THREE.Vector3(0,1,0),yaw);
+  const speed=5.5;
+  if(keys.Space&&onGround){vy=7;onGround=false}
+  vy-=18*dt;
+  moveAxis(dir.x*speed*dt,vy*dt,dir.z*speed*dt);
+}
+const raycaster=new THREE.Raycaster();
+function target(){
+  raycaster.setFromCamera({x:0,y:0},camera);
+  const hits=raycaster.intersectObjects([...meshes.values()],false);
+  return hits.find(h=>h.distance<7);
+}
+function mine(){
+  const h=target();if(!h)return;
+  const b=h.object.userData;
+  if(b.y<=0)return;
+  const t=blocks.get(key(b.x,b.y,b.z));
+  blocks.delete(key(b.x,b.y,b.z)); meshes.delete(key(b.x,b.y,b.z)); scene.remove(h.object);
+  spawnDrop(b.x+.5,b.y+.65,b.z+.5,t);
+}
+function place(){
+  const h=target(), t=selected;
+  if(!h || inventory[t]<=0 || t===0)return;
+  const n=h.face.normal, b=h.object.userData;
+  const x=b.x+Math.round(n.x),y=b.y+Math.round(n.y),z=b.z+Math.round(n.z);
+  if(blocks.has(key(x,y,z)))return;
+  addBlock(x,y,z,t);
+  if(collides(player.position)){scene.remove(meshes.get(key(x,y,z)));meshes.delete(key(x,y,z));blocks.delete(key(x,y,z));return}
+  inventory[t]--;renderInventory();
+}
+
+function spawnDrop(x,y,z,t){
+  if(t===0)t=1;
+  const m=new THREE.Mesh(new THREE.BoxGeometry(.28,.28,.28),materials[t]);
+  m.position.set(x,y,z);m.castShadow=true;m.userData={t,vel:new THREE.Vector3((Math.random()-.5)*2,3,(Math.random()-.5)*2),spin:Math.random()*5};
+  scene.add(m);drops.push(m);
+}
+const inventory=[Infinity,30,20,12,8,10], swatches=types.map(t=>`#${t.color.toString(16).padStart(6,"0")}`);
+let selected=1;
+function select(i){selected=Math.max(0,Math.min(5,i));renderInventory()}
+function renderInventory(){
+  document.querySelector("#hotbar").innerHTML=types.map((t,i)=>`
+    <div class="slot ${i===selected?"active":""}">
+      <span class="key">${i+1}</span><div class="swatch" style="background:${swatches[i]}"></div>
+      <div class="count">${i===0?"∞":inventory[i]}</div>
+    </div>`).join("");
+}
+renderInventory();
+
+let last=performance.now(),time=0;
+function animate(now){
+  requestAnimationFrame(animate);
+  const dt=Math.min((now-last)/1000,.05);last=now;time+=dt;
+  ensureWorld();updatePlayer(dt);
+  for(let i=drops.length-1;i>=0;i--){
+    const d=drops[i],v=d.userData.vel;
+    v.y-=12*dt; d.position.addScaledVector(v,dt);d.rotation.x+=dt*4;d.rotation.y+=dt*5;
+    if(d.position.y<.3){d.position.y=.3;v.y=Math.abs(v.y)*.28;v.x*=.75;v.z*=.75}
+    if(d.position.distanceTo(player.position)<1.5){
+      inventory[d.userData.t]++;scene.remove(d);drops.splice(i,1);renderInventory();
+    }
+  }
+  document.querySelector("#status").textContent=`Block: ${types[selected].name} · Drops: ${drops.length}`;
+  renderer.render(scene,camera);
+}
+addEventListener("resize",()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
+animate(performance.now());
+</script>
+</body>
+</html>
