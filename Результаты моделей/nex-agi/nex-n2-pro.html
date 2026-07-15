@@ -1,0 +1,1449 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Browser Voxel Sandbox</title>
+        <style>
+            :root {
+                color-scheme: dark;
+                --ui-bg: rgba(10, 14, 20, 0.68);
+                --ui-border: rgba(255, 255, 255, 0.22);
+                --ui-text: rgba(255, 255, 255, 0.92);
+            }
+
+            html,
+            body {
+                margin: 0;
+                width: 100%;
+                height: 100%;
+                overflow: hidden;
+                background: #87ceeb;
+                font-family:
+                    system-ui,
+                    -apple-system,
+                    BlinkMacSystemFont,
+                    "Segoe UI",
+                    sans-serif;
+                user-select: none;
+            }
+
+            #game {
+                position: fixed;
+                inset: 0;
+            }
+
+            canvas {
+                display: block;
+                width: 100%;
+                height: 100%;
+                touch-action: none;
+            }
+
+            #crosshair {
+                position: fixed;
+                left: 50%;
+                top: 50%;
+                width: 22px;
+                height: 22px;
+                transform: translate(-50%, -50%);
+                border: 2px solid rgba(255, 255, 255, 0.85);
+                border-radius: 999px;
+                pointer-events: none;
+                mix-blend-mode: difference;
+                z-index: 5;
+            }
+
+            #crosshair::before,
+            #crosshair::after {
+                content: "";
+                position: absolute;
+                background: rgba(255, 255, 255, 0.9);
+                border-radius: 999px;
+            }
+
+            #crosshair::before {
+                left: 10px;
+                top: -5px;
+                width: 2px;
+                height: 32px;
+            }
+
+            #crosshair::after {
+                left: -5px;
+                top: 10px;
+                width: 32px;
+                height: 2px;
+            }
+
+            #help {
+                position: fixed;
+                left: 14px;
+                top: 12px;
+                max-width: 520px;
+                padding: 10px 12px;
+                border: 1px solid var(--ui-border);
+                border-radius: 12px;
+                background: var(--ui-bg);
+                color: var(--ui-text);
+                font-size: 13px;
+                line-height: 1.45;
+                pointer-events: none;
+                z-index: 4;
+                backdrop-filter: blur(8px);
+            }
+
+            #debug {
+                position: fixed;
+                right: 12px;
+                top: 12px;
+                padding: 8px 10px;
+                border: 1px solid var(--ui-border);
+                border-radius: 10px;
+                background: var(--ui-bg);
+                color: rgba(255, 255, 255, 0.78);
+                font:
+                    12px/1.4 ui-monospace,
+                    SFMono-Regular,
+                    Menlo,
+                    Consolas,
+                    monospace;
+                pointer-events: none;
+                z-index: 4;
+                backdrop-filter: blur(8px);
+            }
+
+            #inventory {
+                position: fixed;
+                left: 50%;
+                bottom: 18px;
+                transform: translateX(-50%);
+                display: flex;
+                gap: 7px;
+                padding: 8px;
+                border: 1px solid var(--ui-border);
+                border-radius: 16px;
+                background: rgba(8, 12, 18, 0.58);
+                pointer-events: auto;
+                z-index: 6;
+                backdrop-filter: blur(8px);
+            }
+
+            .slot {
+                position: relative;
+                width: 72px;
+                height: 72px;
+                border: 2px solid rgba(255, 255, 255, 0.18);
+                border-radius: 12px;
+                background:
+                    linear-gradient(
+                        180deg,
+                        rgba(255, 255, 255, 0.08),
+                        rgba(0, 0, 0, 0.18)
+                    ),
+                    rgba(0, 0, 0, 0.34);
+                color: white;
+                box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25);
+                cursor: pointer;
+                overflow: hidden;
+            }
+
+            .slot.active {
+                border-color: #ffffff;
+                box-shadow:
+                    0 0 0 2px rgba(91, 180, 255, 0.85),
+                    0 0 24px rgba(91, 180, 255, 0.38),
+                    inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+                transform: translateY(-4px);
+            }
+
+            .slot .key {
+                position: absolute;
+                left: 7px;
+                top: 5px;
+                font-size: 12px;
+                font-weight: 800;
+                color: rgba(255, 255, 255, 0.78);
+            }
+
+            .slot .name {
+                position: absolute;
+                left: 7px;
+                right: 7px;
+                bottom: 31px;
+                font-size: 12px;
+                font-weight: 700;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+            }
+
+            .slot .count {
+                position: absolute;
+                right: 8px;
+                bottom: 5px;
+                font-size: 22px;
+                font-weight: 900;
+                text-shadow: 0 2px 4px rgba(0, 0, 0, 0.9);
+            }
+
+            #message {
+                position: fixed;
+                left: 50%;
+                bottom: 104px;
+                transform: translateX(-50%) translateY(8px);
+                padding: 9px 13px;
+                border: 1px solid rgba(255, 255, 255, 0.24);
+                border-radius: 999px;
+                background: rgba(0, 0, 0, 0.58);
+                color: white;
+                font-size: 14px;
+                font-weight: 700;
+                opacity: 0;
+                pointer-events: none;
+                transition:
+                    opacity 160ms ease,
+                    transform 160ms ease;
+                z-index: 7;
+                backdrop-filter: blur(8px);
+            }
+
+            #message.show {
+                opacity: 1;
+                transform: translateX(-50%) translateY(0);
+            }
+
+            #overlay {
+                position: fixed;
+                inset: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 24px;
+                background:
+                    radial-gradient(
+                        circle at 50% 35%,
+                        rgba(255, 255, 255, 0.16),
+                        transparent 34%
+                    ),
+                    rgba(3, 7, 12, 0.78);
+                color: white;
+                z-index: 20;
+                cursor: pointer;
+            }
+
+            #overlay.hidden {
+                display: none;
+            }
+
+            .panel {
+                width: min(560px, 92vw);
+                padding: 28px;
+                border: 1px solid rgba(255, 255, 255, 0.22);
+                border-radius: 24px;
+                background: rgba(10, 16, 24, 0.72);
+                box-shadow: 0 24px 90px rgba(0, 0, 0, 0.45);
+                backdrop-filter: blur(12px);
+                text-align: center;
+            }
+
+            .panel h1 {
+                margin: 0 0 10px;
+                font-size: clamp(32px, 7vw, 58px);
+                letter-spacing: -0.04em;
+            }
+
+            .panel p {
+                margin: 10px 0;
+                color: rgba(255, 255, 255, 0.78);
+                line-height: 1.5;
+            }
+
+            kbd {
+                display: inline-block;
+                min-width: 1.6em;
+                padding: 2px 6px;
+                border: 1px solid rgba(255, 255, 255, 0.28);
+                border-bottom-color: rgba(255, 255, 255, 0.12);
+                border-radius: 6px;
+                background: rgba(255, 255, 255, 0.1);
+                color: white;
+                font:
+                    700 12px ui-monospace,
+                    SFMono-Regular,
+                    Menlo,
+                    Consolas,
+                    monospace;
+                box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.35);
+            }
+        </style>
+    </head>
+    <body>
+        <div id="game"></div>
+        <div id="crosshair"></div>
+
+        <div id="help">
+            <b>Voxel Sandbox</b><br />
+            <kbd>WASD</kbd> move · <kbd>Space</kbd> jump · mouse look ·
+            <kbd>LMB</kbd> break · <kbd>RMB</kbd> place · <kbd>1</kbd>-<kbd
+                >6</kbd
+            >
+            / wheel select
+        </div>
+
+        <div id="debug"></div>
+        <div id="message"></div>
+        <div id="inventory"></div>
+
+        <div id="overlay">
+            <div class="panel">
+                <h1>Voxel Sandbox</h1>
+                <p>
+                    Mine blocks, collect spinning drops, choose a slot, and
+                    build in a procedural chunk world.
+                </p>
+                <p>Click anywhere to start and capture the mouse.</p>
+                <p>
+                    <small>Press <kbd>Esc</kbd> to release the cursor.</small>
+                </p>
+            </div>
+        </div>
+
+        <script type="importmap">
+            {
+                "imports": {
+                    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+                }
+            }
+        </script>
+
+        <script type="module">
+            import * as THREE from "three";
+
+            const CHUNK_SIZE = 16;
+            const LOAD_RADIUS = 4;
+            const REACH = 6.0;
+            const PLACE_REACH = 5.4;
+
+            const PLAYER_HEIGHT = 1.8;
+            const PLAYER_RADIUS = 0.32;
+            const EYE_HEIGHT = 1.62;
+            const WALK_SPEED = 5.1;
+            const JUMP_SPEED = 8.3;
+            const GRAVITY = 24.0;
+            const MAX_FALL_SPEED = 42.0;
+            const DROP_RADIUS = 0.16;
+
+            const AIR = 0;
+            const GRASS = 1;
+            const DIRT = 2;
+            const STONE = 3;
+            const SAND = 4;
+            const WOOD = 5;
+            const LEAVES = 6;
+
+            const BLOCKS = [
+                null,
+                { name: "Grass", color: 0x5fbf52 },
+                { name: "Dirt", color: 0x8b5a2b },
+                { name: "Stone", color: 0x858585 },
+                { name: "Sand", color: 0xdcc47a },
+                { name: "Wood", color: 0x8a5a2b },
+                { name: "Leaves", color: 0x2f8f3a },
+            ];
+
+            const SLOT_COUNT = BLOCKS.length - 1;
+
+            const container = document.getElementById("game");
+            const inventoryEl = document.getElementById("inventory");
+            const debugEl = document.getElementById("debug");
+            const messageEl = document.getElementById("message");
+            const overlay = document.getElementById("overlay");
+
+            const scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87ceeb);
+            scene.fog = new THREE.Fog(0x87ceeb, 46, 125);
+
+            const camera = new THREE.PerspectiveCamera(
+                75,
+                window.innerWidth / window.innerHeight,
+                0.05,
+                500,
+            );
+            camera.rotation.order = "YXZ";
+
+            const renderer = new THREE.WebGLRenderer({
+                antialias: true,
+                powerPreference: "high-performance",
+            });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+            renderer.outputColorSpace = THREE.SRGBColorSpace;
+            container.appendChild(renderer.domElement);
+
+            const hemi = new THREE.HemisphereLight(0xcdeeff, 0x4b5b35, 1.25);
+            scene.add(hemi);
+
+            const sun = new THREE.DirectionalLight(0xffffff, 1.05);
+            sun.position.set(55, 85, 35);
+            scene.add(sun);
+
+            const cubeGeo = new THREE.BoxGeometry(1, 1, 1);
+            const dropGeo = new THREE.BoxGeometry(0.32, 0.32, 0.32);
+
+            const materials = BLOCKS.map((block) => {
+                if (!block) return null;
+                return new THREE.MeshStandardMaterial({
+                    color: block.color,
+                    roughness: 0.95,
+                    metalness: 0.0,
+                });
+            });
+
+            function lerp(a, b, t) {
+                return a + (b - a) * t;
+            }
+
+            function smooth(t) {
+                return t * t * (3 - 2 * t);
+            }
+
+            function hash2(ix, iz) {
+                let h = Math.imul(ix, 374761393) ^ Math.imul(iz, 668265263);
+                h = Math.imul(h ^ (h >>> 13), 1274126177);
+                h ^= h >>> 16;
+                return (h >>> 0) / 4294967295;
+            }
+
+            function noise2(x, z) {
+                const ix = Math.floor(x);
+                const iz = Math.floor(z);
+                const fx = x - ix;
+                const fz = z - iz;
+
+                const u = smooth(fx);
+                const v = smooth(fz);
+
+                const h00 = hash2(ix, iz);
+                const h10 = hash2(ix + 1, iz);
+                const h01 = hash2(ix, iz + 1);
+                const h11 = hash2(ix + 1, iz + 1);
+
+                return lerp(lerp(h00, h10, u), lerp(h01, h11, u), v);
+            }
+
+            function fbm(x, z, octaves = 4) {
+                let value = 0;
+                let amplitude = 0.5;
+                let frequency = 1;
+                let norm = 0;
+
+                for (let i = 0; i < octaves; i++) {
+                    value += amplitude * noise2(x * frequency, z * frequency);
+                    norm += amplitude;
+                    frequency *= 2;
+                    amplitude *= 0.5;
+                }
+
+                return value / norm;
+            }
+
+            function terrainHeight(x, z) {
+                const region = fbm(x * 0.01 + 11.7, z * 0.01 - 4.2, 3);
+                const hills = fbm(x * 0.022 - 3.5, z * 0.022 + 8.1, 4);
+                const detail = fbm(x * 0.075 + 1.3, z * 0.075 - 9.2, 3);
+
+                let h;
+                if (region < 0.42) {
+                    // Flat plains with only gentle variation.
+                    h = 5 + Math.floor(detail * 1.4);
+                } else {
+                    // Hills with stronger variation.
+                    h = 5 + Math.floor(hills * 8.0 + detail * 2.5);
+                }
+
+                // Occasional low flat sandy areas.
+                const riverFlat = fbm(x * 0.006 + 100.0, z * 0.006 - 100.0, 2);
+                if (riverFlat < 0.025) h = Math.min(h, 4);
+
+                return Math.max(1, h);
+            }
+
+            function topTypeFor(x, z, h) {
+                const sandyPatch =
+                    fbm(x * 0.05 + 5.0, z * 0.05 - 5.0, 2) < 0.07;
+                return h <= 4 || sandyPatch ? SAND : GRASS;
+            }
+
+            const chunks = new Map();
+
+            function chunkKey(cx, cz) {
+                return `${cx},${cz}`;
+            }
+
+            function localKey(lx, y, lz) {
+                return `${lx},${y},${lz}`;
+            }
+
+            function parseLocalKey(key) {
+                const p = key.split(",");
+                return {
+                    lx: Number(p[0]),
+                    y: Number(p[1]),
+                    lz: Number(p[2]),
+                };
+            }
+
+            function mod(n, m) {
+                return ((n % m) + m) % m;
+            }
+
+            function getChunk(cx, cz) {
+                const key = chunkKey(cx, cz);
+                let chunk = chunks.get(key);
+                if (!chunk) {
+                    chunk = generateChunk(cx, cz);
+                }
+                return chunk;
+            }
+
+            function getBlock(x, y, z) {
+                if (y < -5) return AIR;
+
+                const cx = Math.floor(x / CHUNK_SIZE);
+                const cz = Math.floor(z / CHUNK_SIZE);
+                const lx = x - cx * CHUNK_SIZE;
+                const lz = z - cz * CHUNK_SIZE;
+
+                const chunk = getChunk(cx, cz);
+                return chunk.blocks.get(localKey(lx, y, lz)) || AIR;
+            }
+
+            function getLoadedBlock(x, y, z) {
+                if (y < -5) return AIR;
+
+                const cx = Math.floor(x / CHUNK_SIZE);
+                const cz = Math.floor(z / CHUNK_SIZE);
+                const lx = x - cx * CHUNK_SIZE;
+                const lz = z - cz * CHUNK_SIZE;
+
+                const chunk = chunks.get(chunkKey(cx, cz));
+                return chunk?.blocks.get(localKey(lx, y, lz)) || AIR;
+            }
+
+            function setBlock(x, y, z, type) {
+                if (y < -5) return;
+
+                const cx = Math.floor(x / CHUNK_SIZE);
+                const cz = Math.floor(z / CHUNK_SIZE);
+                const lx = x - cx * CHUNK_SIZE;
+                const lz = z - cz * CHUNK_SIZE;
+
+                const chunk = getChunk(cx, cz);
+                const key = localKey(lx, y, lz);
+
+                if (type === AIR) {
+                    if (chunk.blocks.has(key)) {
+                        chunk.blocks.delete(key);
+                        rebuildChunk(chunk);
+                    }
+                } else {
+                    chunk.blocks.set(key, type);
+                    rebuildChunk(chunk);
+                }
+            }
+
+            function writeBlockNoRebuild(x, y, z, type) {
+                if (y < -5) return;
+
+                const cx = Math.floor(x / CHUNK_SIZE);
+                const cz = Math.floor(z / CHUNK_SIZE);
+                const lx = x - cx * CHUNK_SIZE;
+                const lz = z - cz * CHUNK_SIZE;
+
+                const chunk = chunks.get(chunkKey(cx, cz));
+                if (!chunk) return;
+
+                const key = localKey(lx, y, lz);
+
+                if (type === AIR) chunk.blocks.delete(key);
+                else chunk.blocks.set(key, type);
+            }
+
+            function addTree(x, baseY, z) {
+                const height =
+                    3 + Math.floor(hash2(x * 13 + 9, z * 13 - 4) * 3);
+
+                for (let y = 0; y < height; y++) {
+                    writeBlockNoRebuild(x, baseY + y, z, WOOD);
+                }
+
+                const leafBase = baseY + height - 2;
+
+                for (let dy = -2; dy <= 2; dy++) {
+                    for (let dx = -2; dx <= 2; dx++) {
+                        for (let dz = -2; dz <= 2; dz++) {
+                            const dist =
+                                Math.abs(dx) +
+                                Math.abs(dz) +
+                                Math.abs(dy) * 1.2;
+                            if (dist > 4.25) continue;
+                            if (
+                                Math.abs(dx) === 2 &&
+                                Math.abs(dz) === 2 &&
+                                Math.abs(dy) > 0
+                            )
+                                continue;
+
+                            const yy = leafBase + dy;
+                            if (yy < baseY + 1) continue;
+
+                            writeBlockNoRebuild(x + dx, yy, z + dz, LEAVES);
+                        }
+                    }
+                }
+            }
+
+            function generateChunk(cx, cz) {
+                const blocks = new Map();
+                const chunk = { cx, cz, blocks, meshes: [] };
+                chunks.set(chunkKey(cx, cz), chunk);
+
+                const minX = cx * CHUNK_SIZE;
+                const minZ = cz * CHUNK_SIZE;
+
+                for (let lz = 0; lz < CHUNK_SIZE; lz++) {
+                    const z = minZ + lz;
+                    for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+                        const x = minX + lx;
+                        const h = terrainHeight(x, z);
+                        const top = topTypeFor(x, z, h);
+
+                        for (let y = 0; y <= h; y++) {
+                            let type = STONE;
+
+                            if (y === h) {
+                                type = top;
+                            } else if (y > h - 4) {
+                                type = top === SAND ? SAND : DIRT;
+                            }
+
+                            blocks.set(localKey(lx, y, lz), type);
+                        }
+                    }
+                }
+
+                // Trees are added after terrain so they can decorate plains/hills.
+                for (let lz = 0; lz < CHUNK_SIZE; lz++) {
+                    const z = minZ + lz;
+                    for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+                        const x = minX + lx;
+                        const h = terrainHeight(x, z);
+                        const top = topTypeFor(x, z, h);
+
+                        if (top === GRASS) {
+                            const treeRoll = hash2(x * 19 + 101, z * 19 - 77);
+                            if (treeRoll < 0.035) {
+                                addTree(x, h + 1, z);
+                            }
+                        }
+                    }
+                }
+
+                rebuildChunk(chunk);
+                return chunk;
+            }
+
+            function isBlockExposed(chunk, lx, y, lz, type) {
+                const gx = chunk.cx * CHUNK_SIZE + lx;
+                const gz = chunk.cz * CHUNK_SIZE + lz;
+
+                return (
+                    getLoadedBlock(gx + 1, y, gz) === AIR ||
+                    getLoadedBlock(gx - 1, y, gz) === AIR ||
+                    getLoadedBlock(gx, y + 1, gz) === AIR ||
+                    getLoadedBlock(gx, y - 1, gz) === AIR ||
+                    getLoadedBlock(gx, y, gz + 1) === AIR ||
+                    getLoadedBlock(gx, y, gz - 1) === AIR
+                );
+            }
+
+            function rebuildChunk(chunk) {
+                for (const mesh of chunk.meshes) {
+                    scene.remove(mesh);
+                }
+
+                chunk.meshes.length = 0;
+
+                const lists = new Map();
+                const dummy = new THREE.Object3D();
+
+                for (const [key, type] of chunk.blocks) {
+                    const p = parseLocalKey(key);
+                    if (!isBlockExposed(chunk, p.lx, p.y, p.lz, type)) continue;
+
+                    if (!lists.has(type)) lists.set(type, []);
+                    lists.get(type).push(p);
+                }
+
+                for (const [type, list] of lists) {
+                    const mesh = new THREE.InstancedMesh(
+                        cubeGeo,
+                        materials[type],
+                        list.length,
+                    );
+                    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+                    mesh.frustumCulled = false;
+
+                    for (let i = 0; i < list.length; i++) {
+                        const b = list[i];
+                        dummy.position.set(
+                            chunk.cx * CHUNK_SIZE + b.lx,
+                            b.y,
+                            chunk.cz * CHUNK_SIZE + b.lz,
+                        );
+                        dummy.rotation.set(0, 0, 0);
+                        dummy.scale.set(1, 1, 1);
+                        dummy.updateMatrix();
+                        mesh.setMatrixAt(i, dummy.matrix);
+                    }
+
+                    mesh.instanceMatrix.needsUpdate = true;
+                    scene.add(mesh);
+                    chunk.meshes.push(mesh);
+                }
+            }
+
+            function removeChunk(chunk) {
+                for (const mesh of chunk.meshes) {
+                    scene.remove(mesh);
+                }
+                chunks.delete(chunkKey(chunk.cx, chunk.cz));
+            }
+
+            function updateChunksAroundPlayer() {
+                const cx = Math.floor(player.position.x / CHUNK_SIZE);
+                const cz = Math.floor(player.position.z / CHUNK_SIZE);
+
+                for (let dx = -LOAD_RADIUS; dx <= LOAD_RADIUS; dx++) {
+                    for (let dz = -LOAD_RADIUS; dz <= LOAD_RADIUS; dz++) {
+                        getChunk(cx + dx, cz + dz);
+                    }
+                }
+
+                for (const [key, chunk] of chunks) {
+                    const dcx = Math.abs(chunk.cx - cx);
+                    const dcz = Math.abs(chunk.cz - cz);
+                    if (dcx > LOAD_RADIUS + 1 || dcz > LOAD_RADIUS + 1) {
+                        removeChunk(chunk);
+                    }
+                }
+            }
+
+            const inventory = new Array(BLOCKS.length).fill(0);
+            inventory[GRASS] = 12;
+            inventory[DIRT] = 24;
+            inventory[STONE] = 12;
+            inventory[SAND] = 12;
+            inventory[WOOD] = 8;
+
+            let activeSlot = GRASS;
+
+            function selectSlot(slot) {
+                activeSlot =
+                    ((((slot - 1) % SLOT_COUNT) + SLOT_COUNT) % SLOT_COUNT) + 1;
+                updateInventoryUI();
+            }
+
+            function updateInventoryUI() {
+                inventoryEl.innerHTML = "";
+
+                for (let i = 1; i < BLOCKS.length; i++) {
+                    const slot = document.createElement("div");
+                    slot.className = `slot${i === activeSlot ? " active" : ""}`;
+                    slot.dataset.slot = String(i);
+                    slot.title = `${i}: ${BLOCKS[i].name}`;
+
+                    const key = document.createElement("span");
+                    key.className = "key";
+                    key.textContent = i;
+
+                    const name = document.createElement("span");
+                    name.className = "name";
+                    name.textContent = BLOCKS[i].name;
+
+                    const count = document.createElement("span");
+                    count.className = "count";
+                    count.textContent = inventory[i];
+
+                    slot.append(key, name, count);
+                    inventoryEl.appendChild(slot);
+                }
+            }
+
+            inventoryEl.addEventListener("click", (event) => {
+                const slot = event.target.closest(".slot");
+                if (!slot) return;
+                selectSlot(Number(slot.dataset.slot));
+            });
+
+            let messageTimer = 0;
+
+            function showMessage(text) {
+                messageEl.textContent = text;
+                messageEl.classList.add("show");
+                clearTimeout(messageTimer);
+                messageTimer = setTimeout(() => {
+                    messageEl.classList.remove("show");
+                }, 1400);
+            }
+
+            const player = {
+                position: new THREE.Vector3(),
+                velocity: new THREE.Vector3(),
+                yaw: 0,
+                pitch: 0,
+                onGround: false,
+            };
+
+            const keys = Object.create(null);
+
+            function getTopHeightAt(x, z) {
+                for (let y = 160; y >= -5; y--) {
+                    if (getBlock(x, y, z) !== AIR) return y;
+                }
+                return 0;
+            }
+
+            function respawnPlayer() {
+                const h = getTopHeightAt(0, 0);
+                player.position.set(0, h + 1.05, 0);
+                player.velocity.set(0, 0, 0);
+                player.onGround = false;
+                camera.position.set(
+                    player.position.x,
+                    player.position.y + EYE_HEIGHT,
+                    player.position.z,
+                );
+                updateCameraRotation();
+            }
+
+            function updateCameraRotation() {
+                camera.rotation.set(player.pitch, player.yaw, 0);
+            }
+
+            function playerBounds() {
+                return {
+                    minX: player.position.x - PLAYER_RADIUS,
+                    maxX: player.position.x + PLAYER_RADIUS,
+                    minY: player.position.y,
+                    maxY: player.position.y + PLAYER_HEIGHT,
+                    minZ: player.position.z - PLAYER_RADIUS,
+                    maxZ: player.position.z + PLAYER_RADIUS,
+                };
+            }
+
+            function playerCollides() {
+                const b = playerBounds();
+                const minX = Math.floor(b.minX);
+                const maxX = Math.floor(b.maxX - 1e-6);
+                const minY = Math.floor(b.minY);
+                const maxY = Math.floor(b.maxY - 1e-6);
+                const minZ = Math.floor(b.minZ);
+                const maxZ = Math.floor(b.maxZ - 1e-6);
+
+                for (let x = minX; x <= maxX; x++) {
+                    for (let y = minY; y <= maxY; y++) {
+                        for (let z = minZ; z <= maxZ; z++) {
+                            if (getBlock(x, y, z) !== AIR) return true;
+                        }
+                    }
+                }
+
+                return false;
+            }
+
+            function resolveAxis(delta, axis) {
+                if (delta === 0) return;
+
+                player.position[axis] += delta;
+
+                let guard = 0;
+                while (playerCollides() && guard++ < 8) {
+                    const b = playerBounds();
+                    let correction = 0;
+
+                    if (axis === "x") {
+                        const minX = Math.floor(b.minX);
+                        const maxX = Math.floor(b.maxX - 1e-6);
+                        const minY = Math.floor(b.minY);
+                        const maxY = Math.floor(b.maxY - 1e-6);
+                        const minZ = Math.floor(b.minZ);
+                        const maxZ = Math.floor(b.maxZ - 1e-6);
+
+                        if (delta > 0) {
+                            let best = Infinity;
+                            for (let x = minX; x <= maxX; x++) {
+                                for (let y = minY; y <= maxY; y++) {
+                                    for (let z = minZ; z <= maxZ; z++) {
+                                        if (getBlock(x, y, z) === AIR) continue;
+                                        best = Math.min(
+                                            best,
+                                            x -
+                                                PLAYER_RADIUS -
+                                                player.position.x,
+                                        );
+                                    }
+                                }
+                            }
+                            correction = best === Infinity ? 0 : best;
+                        } else {
+                            let best = -Infinity;
+                            for (let x = minX; x <= maxX; x++) {
+                                for (let y = minY; y <= maxY; y++) {
+                                    for (let z = minZ; z <= maxZ; z++) {
+                                        if (getBlock(x, y, z) === AIR) continue;
+                                        best = Math.max(
+                                            best,
+                                            x +
+                                                1 +
+                                                PLAYER_RADIUS -
+                                                player.position.x,
+                                        );
+                                    }
+                                }
+                            }
+                            correction = best === -Infinity ? 0 : best;
+                        }
+                    } else if (axis === "z") {
+                        const minX = Math.floor(b.minX);
+                        const maxX = Math.floor(b.maxX - 1e-6);
+                        const minY = Math.floor(b.minY);
+                        const maxY = Math.floor(b.maxY - 1e-6);
+                        const minZ = Math.floor(b.minZ);
+                        const maxZ = Math.floor(b.maxZ - 1e-6);
+
+                        if (delta > 0) {
+                            let best = Infinity;
+                            for (let x = minX; x <= maxX; x++) {
+                                for (let y = minY; y <= maxY; y++) {
+                                    for (let z = minZ; z <= maxZ; z++) {
+                                        if (getBlock(x, y, z) === AIR) continue;
+                                        best = Math.min(
+                                            best,
+                                            z -
+                                                PLAYER_RADIUS -
+                                                player.position.z,
+                                        );
+                                    }
+                                }
+                            }
+                            correction = best === Infinity ? 0 : best;
+                        } else {
+                            let best = -Infinity;
+                            for (let x = minX; x <= maxX; x++) {
+                                for (let y = minY; y <= maxY; y++) {
+                                    for (let z = minZ; z <= maxZ; z++) {
+                                        if (getBlock(x, y, z) === AIR) continue;
+                                        best = Math.max(
+                                            best,
+                                            z +
+                                                1 +
+                                                PLAYER_RADIUS -
+                                                player.position.z,
+                                        );
+                                    }
+                                }
+                            }
+                            correction = best === -Infinity ? 0 : best;
+                        }
+                    } else if (axis === "y") {
+                        const minX = Math.floor(b.minX);
+                        const maxX = Math.floor(b.maxX - 1e-6);
+                        const minY = Math.floor(b.minY);
+                        const maxY = Math.floor(b.maxY - 1e-6);
+                        const minZ = Math.floor(b.minZ);
+                        const maxZ = Math.floor(b.maxZ - 1e-6);
+
+                        if (delta > 0) {
+                            let best = Infinity;
+                            for (let x = minX; x <= maxX; x++) {
+                                for (let y = minY; y <= maxY; y++) {
+                                    for (let z = minZ; z <= maxZ; z++) {
+                                        if (getBlock(x, y, z) === AIR) continue;
+                                        best = Math.min(
+                                            best,
+                                            y -
+                                                PLAYER_HEIGHT -
+                                                player.position.y,
+                                        );
+                                    }
+                                }
+                            }
+                            correction = best === Infinity ? 0 : best;
+                        } else {
+                            let best = -Infinity;
+                            for (let x = minX; x <= maxX; x++) {
+                                for (let y = minY; y <= maxY; y++) {
+                                    for (let z = minZ; z <= maxZ; z++) {
+                                        if (getBlock(x, y, z) === AIR) continue;
+                                        best = Math.max(
+                                            best,
+                                            y + 1 - player.position.y,
+                                        );
+                                    }
+                                }
+                            }
+
+                            if (best !== -Infinity) {
+                                player.onGround = true;
+                                correction = best;
+                            }
+                        }
+                    }
+
+                    if (correction === 0) break;
+                    player.position[axis] += correction;
+                }
+            }
+
+            function updatePlayer(dt) {
+                const forward = new THREE.Vector3(
+                    -Math.sin(player.yaw),
+                    0,
+                    -Math.cos(player.yaw),
+                );
+                const right = new THREE.Vector3(
+                    Math.cos(player.yaw),
+                    0,
+                    -Math.sin(player.yaw),
+                );
+
+                let ix = 0;
+                let iz = 0;
+
+                if (keys.KeyW) iz += 1;
+                if (keys.KeyS) iz -= 1;
+                if (keys.KeyD) ix += 1;
+                if (keys.KeyA) ix -= 1;
+
+                if (ix !== 0 || iz !== 0) {
+                    const len = Math.hypot(ix, iz);
+                    const vx = (forward.x * iz + right.x * ix) / len;
+                    const vz = (forward.z * iz + right.z * ix) / len;
+                    player.velocity.x = vx * WALK_SPEED;
+                    player.velocity.z = vz * WALK_SPEED;
+                } else {
+                    player.velocity.x = 0;
+                    player.velocity.z = 0;
+                }
+
+                if (keys.Space && player.onGround) {
+                    player.velocity.y = JUMP_SPEED;
+                    player.onGround = false;
+                }
+
+                player.velocity.y -= GRAVITY * dt;
+                player.velocity.y = Math.max(
+                    player.velocity.y,
+                    -MAX_FALL_SPEED,
+                );
+
+                player.onGround = false;
+
+                resolveAxis(player.velocity.x * dt, "x");
+                resolveAxis(player.velocity.z * dt, "z");
+                resolveAxis(player.velocity.y * dt, "y");
+
+                if (player.position.y < -30) {
+                    respawnPlayer();
+                }
+            }
+
+            function getLookDirection() {
+                const cp = Math.cos(player.pitch);
+                return new THREE.Vector3(
+                    -Math.sin(player.yaw) * cp,
+                    Math.sin(player.pitch),
+                    -Math.cos(player.yaw) * cp,
+                ).normalize();
+            }
+
+            function getEyePosition() {
+                return new THREE.Vector3(
+                    player.position.x,
+                    player.position.y + EYE_HEIGHT,
+                    player.position.z,
+                );
+            }
+
+            function castVoxel(origin, dir, maxDist) {
+                let x = Math.floor(origin.x);
+                let y = Math.floor(origin.y);
+                let z = Math.floor(origin.z);
+
+                let previous = { x, y, z };
+
+                let stepX, stepY, stepZ;
+                let tMaxX, tMaxY, tMaxZ;
+                let tDeltaX, tDeltaY, tDeltaZ;
+
+                if (dir.x > 0) {
+                    stepX = 1;
+                    tMaxX = (x + 1 - origin.x) / dir.x;
+                } else if (dir.x < 0) {
+                    stepX = -1;
+                    tMaxX = (origin.x - x) / -dir.x;
+                } else {
+                    stepX = 0;
+                    tMaxX = Infinity;
+                }
+
+                if (dir.y > 0) {
+                    stepY = 1;
+                    tMaxY = (y + 1 - origin.y) / dir.y;
+                } else if (dir.y < 0) {
+                    stepY = -1;
+                    tMaxY = (origin.y - y) / -dir.y;
+                } else {
+                    stepY = 0;
+                    tMaxY = Infinity;
+                }
+
+                if (dir.z > 0) {
+                    stepZ = 1;
+                    tMaxZ = (z + 1 - origin.z) / dir.z;
+                } else if (dir.z < 0) {
+                    stepZ = -1;
+                    tMaxZ = (origin.z - z) / -dir.z;
+                } else {
+                    stepZ = 0;
+                    tMaxZ = Infinity;
+                }
+
+                tDeltaX = stepX === 0 ? Infinity : Math.abs(1 / dir.x);
+                tDeltaY = stepY === 0 ? Infinity : Math.abs(1 / dir.y);
+                tDeltaZ = stepZ === 0 ? Infinity : Math.abs(1 / dir.z);
+
+                let dist = 0;
+                const maxSteps = 128;
+
+                for (let i = 0; i < maxSteps; i++) {
+                    const type = getBlock(x, y, z);
+
+                    if (type !== AIR) {
+                        return {
+                            hit: { x, y, z, type },
+                            previous,
+                            distance: dist,
+                        };
+                    }
+
+                    previous = { x, y, z };
+
+                    if (tMaxX < tMaxY) {
+                        if (tMaxX < tMaxZ) {
+                            x += stepX;
+                            dist = tMaxX;
+                            tMaxX += tDeltaX;
+                        } else {
+                            z += stepZ;
+                            dist = tMaxZ;
+                            tMaxZ += tDeltaZ;
+                        }
+                    } else {
+                        if (tMaxY < tMaxZ) {
+                            y += stepY;
+                            dist = tMaxY;
+                            tMaxY += tDeltaY;
+                        } else {
+                            z += stepZ;
+                            dist = tMaxZ;
+                            tMaxZ += tDeltaZ;
+                        }
+                    }
+
+                    if (dist > maxDist) break;
+                }
+
+                return null;
+            }
+
+            function wouldPlayerCollideWithBlock(x, y, z) {
+                return (
+                    player.position.x + PLAYER_RADIUS > x &&
+                    player.position.x - PLAYER_RADIUS < x + 1 &&
+                    player.position.y + PLAYER_HEIGHT > y &&
+                    player.position.y < y + 1 &&
+                    player.position.z + PLAYER_RADIUS > z &&
+                    player.position.z - PLAYER_RADIUS < z + 1
+                );
+            }
+
+            function breakBlock() {
+                const origin = getEyePosition();
+                const dir = getLookDirection();
+                const hit = castVoxel(origin, dir, REACH);
+
+                if (!hit) return;
+
+                const b = hit.hit;
+                setBlock(b.x, b.y, b.z, AIR);
+                spawnDrop(b.x, b.y, b.z, b.type);
+
+                inventory[b.type]++;
+                updateInventoryUI();
+            }
+
+            function placeBlock() {
+                const origin = getEyePosition();
+                const dir = getLookDirection();
+                const hit = castVoxel(origin, dir, PLACE_REACH);
+
+                if (!hit) return;
+
+                const p = hit.previous;
+
+                if (inventory[activeSlot] <= 0) {
+                    showMessage("No blocks in selected slot");
+                    return;
+                }
+
+                if (wouldPlayerCollideWithBlock(p.x, p.y, p.z)) {
+                    showMessage("Cannot place block inside player");
+                    return;
+                }
+
+                setBlock(p.x, p.y, p.z, activeSlot);
+                inventory[activeSlot]--;
+                updateInventoryUI();
+            }
+
+            const drops = [];
+
+            function spawnDrop(x, y, z, type) {
+                const mesh = new THREE.Mesh(dropGeo, materials[type]);
+                mesh.position.set(x + 0.5, y + 1 + DROP_RADIUS + 0.05, z + 0.5);
+                mesh.rotation.set(
+                    Math.random() * Math.PI,
+                    Math.random() * Math.PI,
+                    Math.random() * Math.PI,
+                );
+
+                mesh.userData = {
+                    type,
+                    radius: DROP_RADIUS,
+                    life: 0,
+                    velocity: new THREE.Vector3(
+                        (Math.random() - 0.5) * 2.2,
+                        2.0 + Math.random() * 1.6,
+                        (Math.random() - 0.5) * 2.2,
+                    ),
+                };
+
+                scene.add(mesh);
+                drops.push(mesh);
+            }
+
+            function updateDrops(dt) {
+                for (let i = drops.length - 1; i >= 0; i--) {
+                    const drop = drops[i];
+                    const data = drop.userData;
+
+                    data.life += dt;
+
+                    data.velocity.y -= GRAVITY * dt;
+                    drop.position.addScaledVector(data.velocity, dt);
+
+                    drop.rotation.x += dt * 3.2;
+                    drop.rotation.y += dt * 4.6;
+                    drop.rotation.z += dt * 2.4;
+
+                    const groundY = getTopHeightAt(
+                        drop.position.x,
+                        drop.position.z,
+                    );
+                    const minY = groundY + 1 + data.radius;
+
+                    if (drop.position.y < minY) {
+                        drop.position.y = minY;
+
+                        if (data.velocity.y < -6.0) {
+                            data.velocity.y *= -0.25;
+                        } else {
+                            data.velocity.y = 0;
+                        }
+
+                        const friction = Math.pow(0.12, dt);
+                        data.velocity.x *= friction;
+                        data.velocity.z *= friction;
+                    }
+
+                    const pickupDistance = Math.hypot(
+                        drop.position.x - player.position.x,
+                        drop.position.y - (player.position.y + 0.9),
+                        drop.position.z - player.position.z,
+                    );
+
+                    if (pickupDistance < 1.25) {
+                        inventory[data.type]++;
+                        updateInventoryUI();
+                        scene.remove(drop);
+                        drops.splice(i, 1);
+                        continue;
+                    }
+
+                    if (drop.position.y < -50 || data.life > 300) {
+                        scene.remove(drop);
+                        drops.splice(i, 1);
+                    }
+                }
+            }
+
+            function slotFromCode(code) {
+                const m = code.match(/^(Digit|Numpad)([1-6])$/);
+                return m ? Number(m[2]) : 0;
+            }
+
+            window.addEventListener("keydown", (event) => {
+                const movementCodes = new Set([
+                    "KeyW",
+                    "KeyA",
+                    "KeyS",
+                    "KeyD",
+                    "Space",
+                    "ArrowUp",
+                    "ArrowDown",
+                    "ArrowLeft",
+                    "ArrowRight",
+                ]);
+
+                if (movementCodes.has(event.code)) {
+                    event.preventDefault();
+                }
+
+                keys[event.code] = true;
+
+                const slot = slotFromCode(event.code);
+                if (slot) selectSlot(slot);
+            });
+
+            window.addEventListener("keyup", (event) => {
+                keys[event.code] = false;
+            });
+
+            window.addEventListener("blur", () => {
+                for (const k of Object.keys(keys)) keys[k] = false;
+            });
+
+            window.addEventListener(
+                "wheel",
+                (event) => {
+                    event.preventDefault();
+                    selectSlot(activeSlot + (event.deltaY > 0 ? 1 : -1));
+                },
+                { passive: false },
+            );
+
+            let pointerLocked = false;
+
+            function requestPointerLock() {
+                if (renderer.domElement.requestPointerLock) {
+                    renderer.domElement.requestPointerLock();
+                }
+            }
+
+            overlay.addEventListener("click", requestPointerLock);
+
+            renderer.domElement.addEventListener("click", () => {
+                if (!pointerLocked) requestPointerLock();
+            });
+
+            document.addEventListener("pointerlockchange", () => {
+                pointerLocked =
+                    document.pointerLockElement === renderer.domElement;
+                overlay.classList.toggle("hidden", pointerLocked);
+            });
+
+            document.addEventListener("mousemove", (event) => {
+                if (!pointerLocked) return;
+
+                player.yaw -= event.movementX * 0.0022;
+                player.pitch -= event.movementY * 0.0022;
+                player.pitch = THREE.MathUtils.clamp(
+                    player.pitch,
+                    -Math.PI / 2 + 0.01,
+                    Math.PI / 2 - 0.01,
+                );
+
+                updateCameraRotation();
+            });
+
+            document.addEventListener("contextmenu", (event) => {
+                event.preventDefault();
+            });
+
+            renderer.domElement.addEventListener("mousedown", (event) => {
+                if (!pointerLocked) return;
+                event.preventDefault();
+
+                if (event.button === 0) breakBlock();
+                if (event.button === 2) placeBlock();
+            });
+
+            window.addEventListener("resize", () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                renderer.setPixelRatio(
+                    Math.min(window.devicePixelRatio || 1, 2),
+                );
+            });
+
+            let debugTimer = 0;
+
+            function updateDebug(dt) {
+                debugTimer += dt;
+                if (debugTimer < 0.2) return;
+                debugTimer = 0;
+
+                const cx = Math.floor(player.position.x / CHUNK_SIZE);
+                const cz = Math.floor(player.position.z / CHUNK_SIZE);
+
+                debugEl.textContent =
+                    `Pos: ${player.position.x.toFixed(1)}, ${player.position.y.toFixed(1)}, ${player.position.z.toFixed(1)}\n` +
+                    `Chunk: ${cx}, ${cz} | Loaded: ${chunks.size} | Drops: ${drops.length}`;
+            }
+
+            respawnPlayer();
+            updateChunksAroundPlayer();
+            updateInventoryUI();
+            updateCameraRotation();
+
+            let lastTime = performance.now();
+
+            function animate(now) {
+                requestAnimationFrame(animate);
+
+                const dt = Math.min(0.05, Math.max(0, (now - lastTime) / 1000));
+                lastTime = now;
+
+                updatePlayer(dt);
+                updateChunksAroundPlayer();
+                updateDrops(dt);
+
+                camera.position.set(
+                    player.position.x,
+                    player.position.y + EYE_HEIGHT,
+                    player.position.z,
+                );
+
+                renderer.render(scene, camera);
+                updateDebug(dt);
+            }
+
+            requestAnimationFrame(animate);
+        </script>
+    </body>
+</html>
