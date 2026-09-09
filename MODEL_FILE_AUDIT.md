@@ -17,20 +17,12 @@
 | Строк в таблице | 223 |
 | HTML-файлов на диске | 227 |
 | Корректные непустые результаты | 182 |
-| Корректные плейсхолдеры (0 байт) | 37 |
-| Контент без времени | 3 |
+| Корректные плейсхолдеры (0 байт) | 40 |
+| Контент без времени | 0 |
 | Время без контента | 1 |
 | Строк без файла | 0 |
 | Файлов без строки | 4 |
-| **Нарушений правила** | **8** |
-
-## Нарушение: контент есть, время пусто
-
-| Строка | Вендор | Модель | Файл | Размер |
-|---:|---|---|---|---:|
-| 110 | MiniMax | MiniMax 3.0 | `minimax/minimax-3.html` | 125967 |
-| 111 | meta | Muse Spark 1.2 | `meta/muse-spark-1-2.html` | 58239 |
-| 209 | Hunyuan | Hy4 | `hunyuan/hy4.html` | 191686 |
+| **Нарушений правила** | **5** |
 
 ## Нарушение: время есть, файл пустой
 
@@ -168,8 +160,8 @@
 | 107 | meiTuan | LongCat 2.0 | 10,44 | `meituan/longcat-2-0.html` | 34629 | READY |
 | 108 | MiniMax | MiniMax 2.5 | 1,17 | `minimax/minimax-2-5.html` | 25295 | READY |
 | 109 | MiniMax | MiniMax 2.7 | 3,39 | `minimax/minimax-2-7.html` | 61220 | READY |
-| 110 | MiniMax | MiniMax 3.0 | пусто | `minimax/minimax-3.html` | 125967 | НАРУШЕНИЕ: контент без времени |
-| 111 | meta | Muse Spark 1.2 | пусто | `meta/muse-spark-1-2.html` | 58239 | НАРУШЕНИЕ: контент без времени |
+| 110 | MiniMax | MiniMax 3.0 | пусто | `minimax/minimax-3.html` | 0 | PLACEHOLDER |
+| 111 | meta | Muse Spark 1.2 | пусто | `meta/muse-spark-1-2.html` | 0 | PLACEHOLDER |
 | 112 | meta | Muse Spark 1.3 | 5,14 | `meta/muse-spark-1-3.html` | 69048 | READY |
 | 113 | Mistral | Devstral 2 | 1,50 | `mistral/devstral-2.html` | 71326 | READY |
 | 114 | Mistral | Ministral 3 14b | 1,53 | `mistral/ministral-3-14b.html` | 56827 | READY |
@@ -267,7 +259,7 @@
 | 206 | Xiaomi | MiMo v2.5 Flash | 3,24 | `xiaomi/mimo-v2-5-flash.html` | 22175 | READY |
 | 207 | Xiaomi | MiMo v2.5 Pro | 4,59 | `xiaomi/mimo-v2-5-pro.html` | 26219 | READY |
 | 208 | Alpha | Ox Alpha | пусто | `alpha/ox-alpha.html` | 0 | PLACEHOLDER |
-| 209 | Hunyuan | Hy4 | пусто | `hunyuan/hy4.html` | 191686 | НАРУШЕНИЕ: контент без времени |
+| 209 | Hunyuan | Hy4 | пусто | `hunyuan/hy4.html` | 0 | PLACEHOLDER |
 | 210 | Z.AI | GLM 4.5 Air Thinking | 1,28 | `z-ai/glm-4-5-air-thinking.html` | 26093 | READY |
 | 211 | Z.AI | GLM 4.5 Thinking | 1,40 | `z-ai/glm-4-5-thinking.html` | 28913 | READY |
 | 212 | Z.AI | GLM 4.6 Thinking | 4,35 | `z-ai/glm-4-6-thinking.html` | 38595 | READY |
