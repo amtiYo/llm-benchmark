@@ -1,0 +1,3546 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#111a20">
+  <title>Blockbound</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #f6f7ef;
+      --muted: #aeb9b3;
+      --panel: rgba(15, 22, 25, 0.88);
+      --panel-strong: rgba(10, 15, 17, 0.96);
+      --edge: rgba(255, 255, 255, 0.14);
+      --accent: #a8dc65;
+      --accent-deep: #5f963c;
+      --danger: #e86852;
+      --shadow: 0 18px 55px rgba(0, 0, 0, 0.42);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-synthesis: none;
+    }
+
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #111a20;
+      color: var(--ink);
+      overscroll-behavior: none;
+      touch-action: none;
+      user-select: none;
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    button {
+      color: inherit;
+    }
+
+    #game-root,
+    #game-root canvas {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    #game-root canvas {
+      display: block;
+      image-rendering: auto;
+      outline: none;
+    }
+
+    #boot-fallback {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: none;
+      place-items: center;
+      padding: 24px;
+      background:
+        radial-gradient(circle at 50% 30%, rgba(85, 126, 89, 0.28), transparent 35%),
+        #10171b;
+    }
+
+    #boot-fallback .fatal-card {
+      width: min(520px, 100%);
+      padding: 28px;
+      border: 1px solid var(--edge);
+      border-radius: 18px;
+      background: var(--panel-strong);
+      box-shadow: var(--shadow);
+      text-align: center;
+    }
+
+    #boot-fallback h2 {
+      margin: 0 0 10px;
+      font-size: 24px;
+    }
+
+    #boot-fallback p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .screen-shade,
+    .screen-vignette,
+    #damage-flash {
+      position: fixed;
+      inset: 0;
+      z-index: 4;
+      pointer-events: none;
+    }
+
+    .screen-shade {
+      background: linear-gradient(to bottom, rgba(8, 18, 26, 0.08), transparent 36%, rgba(3, 8, 12, 0.16));
+      mix-blend-mode: multiply;
+    }
+
+    .screen-vignette {
+      box-shadow: inset 0 0 110px rgba(0, 0, 0, 0.34);
+    }
+
+    #damage-flash {
+      background: radial-gradient(circle, transparent 20%, rgba(196, 39, 29, 0.55));
+      opacity: 0;
+      transition: opacity 180ms ease;
+    }
+
+    #damage-flash.show {
+      opacity: 1;
+      transition-duration: 40ms;
+    }
+
+    #hud {
+      position: fixed;
+      inset: 0;
+      z-index: 8;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 220ms ease;
+    }
+
+    #hud.visible {
+      opacity: 1;
+    }
+
+    #world-strip {
+      position: absolute;
+      top: max(14px, env(safe-area-inset-top));
+      left: 50%;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-width: 280px;
+      padding: 8px 12px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 999px;
+      background: rgba(8, 13, 15, 0.55);
+      box-shadow: 0 8px 25px rgba(0, 0, 0, 0.18);
+      backdrop-filter: blur(11px);
+      transform: translateX(-50%);
+      font-size: 11px;
+      font-weight: 720;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    #world-strip .dot {
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.35);
+    }
+
+    #world-strip .biome {
+      color: var(--accent);
+    }
+
+    #stats-panel {
+      position: absolute;
+      top: max(62px, calc(env(safe-area-inset-top) + 48px));
+      left: max(14px, env(safe-area-inset-left));
+      display: grid;
+      gap: 5px;
+      padding: 9px 11px;
+      border-radius: 10px;
+      background: rgba(7, 12, 14, 0.36);
+      color: rgba(255, 255, 255, 0.68);
+      font: 650 10px/1.25 ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: 0.04em;
+      backdrop-filter: blur(8px);
+    }
+
+    #vitals {
+      position: absolute;
+      left: max(17px, env(safe-area-inset-left));
+      bottom: max(101px, calc(env(safe-area-inset-bottom) + 90px));
+      display: grid;
+      gap: 8px;
+      width: 176px;
+      filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.45));
+    }
+
+    #hearts {
+      display: flex;
+      gap: 4px;
+    }
+
+    .heart {
+      position: relative;
+      width: 22px;
+      height: 20px;
+      filter: drop-shadow(0 2px 0 rgba(61, 14, 10, 0.75));
+    }
+
+    .heart::before {
+      content: "♥";
+      position: absolute;
+      inset: -5px 0 0;
+      color: rgba(58, 31, 29, 0.82);
+      font-size: 25px;
+      line-height: 1;
+    }
+
+    .heart > span {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      width: var(--fill, 100%);
+    }
+
+    .heart > span::before {
+      content: "♥";
+      position: absolute;
+      top: -5px;
+      left: 0;
+      color: #ef654f;
+      font-size: 25px;
+      line-height: 1;
+    }
+
+    .meter {
+      position: relative;
+      height: 7px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.4);
+    }
+
+    .meter > span {
+      display: block;
+      width: var(--value, 100%);
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #629a3c, #b8df66);
+      box-shadow: 0 0 11px rgba(168, 220, 101, 0.32);
+      transition: width 100ms linear;
+    }
+
+    .meter-label {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 4px;
+      color: rgba(255, 255, 255, 0.7);
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    #crosshair {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 24px;
+      height: 24px;
+      transform: translate(-50%, -50%);
+      filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.85));
+    }
+
+    #crosshair::before,
+    #crosshair::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      border-radius: 1px;
+      background: rgba(255, 255, 255, 0.92);
+      transform: translate(-50%, -50%);
+    }
+
+    #crosshair::before {
+      width: 18px;
+      height: 2px;
+    }
+
+    #crosshair::after {
+      width: 2px;
+      height: 18px;
+    }
+
+    #crosshair .center {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      z-index: 2;
+      width: 4px;
+      height: 4px;
+      border: 1px solid rgba(0, 0, 0, 0.8);
+      background: white;
+      transform: translate(-50%, -50%);
+    }
+
+    #mine-ring {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 46px;
+      height: 46px;
+      border-radius: 50%;
+      background: conic-gradient(rgba(255, 255, 255, 0.9) calc(var(--mine) * 1turn), transparent 0);
+      opacity: 0;
+      transform: translate(-50%, -50%) rotate(-90deg);
+      transition: opacity 100ms ease;
+      -webkit-mask: radial-gradient(circle, transparent 59%, #000 61%);
+      mask: radial-gradient(circle, transparent 59%, #000 61%);
+    }
+
+    #mine-ring.active {
+      opacity: 0.85;
+    }
+
+    #target-card {
+      position: absolute;
+      top: calc(50% + 31px);
+      left: 50%;
+      padding: 5px 8px;
+      border-radius: 6px;
+      background: rgba(5, 9, 11, 0.58);
+      color: rgba(255, 255, 255, 0.78);
+      font-size: 10px;
+      font-weight: 750;
+      letter-spacing: 0.06em;
+      opacity: 0;
+      transform: translateX(-50%);
+      transition: opacity 100ms ease;
+      backdrop-filter: blur(6px);
+    }
+
+    #target-card.visible {
+      opacity: 1;
+    }
+
+    #hotbar-wrap {
+      position: absolute;
+      left: 50%;
+      bottom: max(19px, env(safe-area-inset-bottom));
+      display: grid;
+      justify-items: center;
+      gap: 7px;
+      transform: translateX(-50%);
+      pointer-events: auto;
+    }
+
+    #selected-name {
+      min-height: 21px;
+      padding: 4px 9px;
+      border-radius: 6px;
+      background: rgba(5, 9, 11, 0.52);
+      color: rgba(255, 255, 255, 0.86);
+      font-size: 11px;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      opacity: 0;
+      transition: opacity 180ms ease;
+      backdrop-filter: blur(7px);
+    }
+
+    #selected-name.show {
+      opacity: 1;
+    }
+
+    #hotbar {
+      display: flex;
+      gap: 4px;
+      padding: 5px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 12px;
+      background: rgba(7, 11, 13, 0.67);
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.34);
+      backdrop-filter: blur(10px);
+    }
+
+    .slot {
+      position: relative;
+      display: grid;
+      width: 49px;
+      height: 49px;
+      place-items: center;
+      border: 1px solid rgba(255, 255, 255, 0.11);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.055);
+      box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.15);
+      cursor: pointer;
+      transition: transform 110ms ease, border-color 110ms ease, background 110ms ease;
+    }
+
+    .slot:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    .slot.selected {
+      border-color: rgba(228, 255, 196, 0.95);
+      background: rgba(168, 220, 101, 0.17);
+      box-shadow:
+        inset 0 0 0 2px rgba(83, 129, 51, 0.7),
+        0 0 0 2px rgba(255, 255, 255, 0.82),
+        0 4px 18px rgba(127, 178, 78, 0.35);
+      transform: translateY(-4px);
+    }
+
+    .slot-key {
+      position: absolute;
+      top: 3px;
+      left: 5px;
+      color: rgba(255, 255, 255, 0.42);
+      font: 700 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    .slot-count {
+      position: absolute;
+      right: 4px;
+      bottom: 3px;
+      color: white;
+      font: 900 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      text-shadow: 0 2px 0 #000, 1px 0 0 #000, -1px 0 0 #000;
+    }
+
+    .block-icon {
+      width: 31px;
+      height: 31px;
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      border-radius: 4px;
+      background-color: #777;
+      background-repeat: no-repeat;
+      image-rendering: pixelated;
+      box-shadow:
+        inset -5px -6px 0 rgba(0, 0, 0, 0.14),
+        inset 3px 3px 0 rgba(255, 255, 255, 0.1),
+        0 3px 5px rgba(0, 0, 0, 0.34);
+    }
+
+    #hand {
+      position: absolute;
+      right: -4vw;
+      bottom: -13vh;
+      width: clamp(110px, 16vw, 210px);
+      height: clamp(170px, 25vw, 310px);
+      border: clamp(8px, 1.1vw, 14px) solid rgba(76, 44, 25, 0.24);
+      border-radius: 15% 15% 4% 4%;
+      background:
+        linear-gradient(90deg, transparent 0 59%, rgba(255, 255, 255, 0.1) 60% 70%, transparent 71%),
+        linear-gradient(145deg, #db9b6c 0 20%, #b96f49 21% 56%, #805337 57% 100%);
+      box-shadow:
+        inset 18px 0 rgba(255, 255, 255, 0.06),
+        inset -22px 0 rgba(0, 0, 0, 0.13),
+        0 10px 30px rgba(0, 0, 0, 0.28);
+      opacity: 0.92;
+      transform: rotate(-22deg);
+      transform-origin: 70% 100%;
+      will-change: transform;
+    }
+
+    #toast-stack {
+      position: fixed;
+      z-index: 30;
+      top: max(65px, calc(env(safe-area-inset-top) + 52px));
+      right: max(16px, env(safe-area-inset-right));
+      display: grid;
+      justify-items: end;
+      gap: 8px;
+      pointer-events: none;
+    }
+
+    .toast {
+      max-width: min(340px, calc(100vw - 32px));
+      padding: 10px 13px;
+      border: 1px solid rgba(255, 255, 255, 0.13);
+      border-radius: 10px;
+      background: rgba(10, 16, 18, 0.88);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+      color: rgba(255, 255, 255, 0.9);
+      font-size: 12px;
+      font-weight: 650;
+      line-height: 1.35;
+      opacity: 0;
+      transform: translateX(12px);
+      animation: toast-in 180ms ease forwards, toast-out 220ms ease 2.65s forwards;
+      backdrop-filter: blur(9px);
+    }
+
+    @keyframes toast-in {
+      to { opacity: 1; transform: translateX(0); }
+    }
+
+    @keyframes toast-out {
+      to { opacity: 0; transform: translateX(10px); }
+    }
+
+    .overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      display: grid;
+      place-items: center;
+      padding:
+        max(20px, env(safe-area-inset-top))
+        max(20px, env(safe-area-inset-right))
+        max(20px, env(safe-area-inset-bottom))
+        max(20px, env(safe-area-inset-left));
+      background:
+        radial-gradient(circle at 50% 28%, rgba(121, 167, 94, 0.15), transparent 33%),
+        rgba(4, 8, 10, 0.52);
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 220ms ease, visibility 220ms ease;
+      backdrop-filter: blur(9px) saturate(0.78);
+    }
+
+    .overlay.visible {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    #start-screen {
+      z-index: 25;
+      background:
+        linear-gradient(to bottom, rgba(4, 8, 10, 0.3), rgba(4, 8, 10, 0.66)),
+        radial-gradient(circle at 50% 30%, rgba(154, 202, 102, 0.13), transparent 40%);
+    }
+
+    .start-layout {
+      display: grid;
+      width: min(970px, 100%);
+      grid-template-columns: minmax(0, 1.2fr) minmax(285px, 0.8fr);
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 24px;
+      background: rgba(9, 14, 16, 0.86);
+      box-shadow: 0 32px 90px rgba(0, 0, 0, 0.48);
+    }
+
+    .start-hero {
+      position: relative;
+      display: flex;
+      min-height: 520px;
+      flex-direction: column;
+      justify-content: flex-end;
+      overflow: hidden;
+      padding: 46px;
+      background:
+        linear-gradient(180deg, transparent 15%, rgba(8, 13, 15, 0.89) 100%),
+        repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.025) 0 2px, transparent 2px 12px);
+    }
+
+    .start-hero::before {
+      content: "";
+      position: absolute;
+      top: 30px;
+      right: 35px;
+      width: 155px;
+      height: 155px;
+      border-radius: 50%;
+      background: rgba(255, 237, 167, 0.12);
+      box-shadow: 0 0 80px rgba(255, 226, 128, 0.12);
+    }
+
+    .eyebrow {
+      position: relative;
+      margin-bottom: 16px;
+      color: #b6dc82;
+      font-size: 11px;
+      font-weight: 850;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+    }
+
+    .game-title {
+      position: relative;
+      margin: 0;
+      font: 950 clamp(54px, 8vw, 92px)/0.82 ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: -0.09em;
+      text-transform: uppercase;
+      text-shadow:
+        0 5px 0 #39592f,
+        0 9px 0 rgba(0, 0, 0, 0.32);
+    }
+
+    .game-title span {
+      color: var(--accent);
+    }
+
+    .tagline {
+      position: relative;
+      max-width: 530px;
+      margin: 25px 0 0;
+      color: #bdc7c1;
+      font-size: 15px;
+      line-height: 1.6;
+    }
+
+    .feature-row {
+      position: relative;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-top: 25px;
+    }
+
+    .chip {
+      padding: 6px 9px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.04);
+      color: rgba(255, 255, 255, 0.67);
+      font-size: 10px;
+      font-weight: 750;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .start-side {
+      display: flex;
+      min-height: 520px;
+      flex-direction: column;
+      padding: 35px;
+      border-left: 1px solid rgba(255, 255, 255, 0.09);
+      background: rgba(7, 12, 14, 0.62);
+    }
+
+    .start-side h2,
+    .panel-card h2 {
+      margin: 0;
+      font-size: 19px;
+      letter-spacing: -0.02em;
+    }
+
+    .seed-line {
+      margin-top: 8px;
+      color: var(--muted);
+      font: 650 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    .controls-list {
+      display: grid;
+      gap: 8px;
+      margin: 26px 0 auto;
+    }
+
+    .control-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      color: #aeb8b2;
+      font-size: 12px;
+    }
+
+    .keys {
+      display: flex;
+      gap: 4px;
+    }
+
+    kbd {
+      display: inline-grid;
+      min-width: 27px;
+      height: 25px;
+      place-items: center;
+      padding: 0 6px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-bottom-color: rgba(255, 255, 255, 0.32);
+      border-radius: 5px;
+      background: rgba(255, 255, 255, 0.07);
+      color: #ecf0eb;
+      font: 800 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      box-shadow: 0 2px 0 rgba(0, 0, 0, 0.45);
+    }
+
+    .loading-zone {
+      margin-top: 25px;
+    }
+
+    .loading-copy {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      color: #95a39b;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .loading-track {
+      height: 5px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    #loading-bar {
+      width: 3%;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #5b8e3b, #b5de71);
+      box-shadow: 0 0 14px rgba(167, 218, 99, 0.35);
+      transition: width 180ms ease;
+    }
+
+    .primary-btn,
+    .secondary-btn,
+    .danger-btn {
+      display: inline-flex;
+      min-height: 46px;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      padding: 0 18px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 850;
+      letter-spacing: 0.04em;
+      transition: transform 120ms ease, filter 120ms ease, background 120ms ease;
+    }
+
+    .primary-btn {
+      margin-top: 17px;
+      border: 1px solid #b7e47d;
+      background: linear-gradient(#a9dc69, #75aa49);
+      color: #13200e;
+      box-shadow: 0 5px 0 #416b2c, 0 11px 25px rgba(64, 107, 44, 0.25);
+    }
+
+    .primary-btn:hover:not(:disabled),
+    .secondary-btn:hover,
+    .danger-btn:hover {
+      filter: brightness(1.08);
+      transform: translateY(-1px);
+    }
+
+    .primary-btn:active:not(:disabled),
+    .secondary-btn:active,
+    .danger-btn:active {
+      transform: translateY(2px);
+    }
+
+    .primary-btn:disabled {
+      border-color: #59635a;
+      background: #38403a;
+      color: #89918b;
+      box-shadow: 0 4px 0 #232824;
+      cursor: wait;
+    }
+
+    .secondary-btn {
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      background: rgba(255, 255, 255, 0.07);
+      box-shadow: 0 4px 0 rgba(0, 0, 0, 0.3);
+    }
+
+    .danger-btn {
+      border: 1px solid rgba(255, 129, 104, 0.35);
+      background: rgba(179, 63, 44, 0.18);
+      color: #ffb4a4;
+    }
+
+    .panel-card {
+      width: min(440px, 100%);
+      padding: 31px;
+      border: 1px solid var(--edge);
+      border-radius: 18px;
+      background: var(--panel-strong);
+      box-shadow: var(--shadow);
+    }
+
+    .panel-card > p {
+      margin: 9px 0 24px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .button-stack {
+      display: grid;
+      gap: 10px;
+    }
+
+    .settings-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 15px;
+      margin: 22px 0;
+      padding: 15px 0;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      color: #bbc4be;
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .settings-row select {
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 7px;
+      background: #151f22;
+      color: white;
+      padding: 7px 8px;
+      outline: none;
+    }
+
+    #inventory-screen {
+      z-index: 26;
+    }
+
+    .inventory-card {
+      width: min(780px, 100%);
+      max-height: min(720px, calc(100vh - 40px));
+      overflow: auto;
+      padding: 28px;
+      border: 1px solid var(--edge);
+      border-radius: 20px;
+      background: var(--panel-strong);
+      box-shadow: var(--shadow);
+    }
+
+    .inventory-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 20px;
+      margin-bottom: 22px;
+    }
+
+    .inventory-head h2 {
+      margin: 0 0 5px;
+      font-size: 21px;
+    }
+
+    .inventory-head p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .icon-btn {
+      width: 35px;
+      height: 35px;
+      border: 1px solid rgba(255, 255, 255, 0.13);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.07);
+      cursor: pointer;
+    }
+
+    #inventory-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .inventory-item {
+      position: relative;
+      display: grid;
+      min-height: 112px;
+      place-items: center;
+      gap: 8px;
+      padding: 13px 8px 10px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 11px;
+      background: rgba(255, 255, 255, 0.04);
+      cursor: pointer;
+      transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+    }
+
+    .inventory-item:hover {
+      border-color: rgba(168, 220, 101, 0.5);
+      background: rgba(168, 220, 101, 0.08);
+      transform: translateY(-2px);
+    }
+
+    .inventory-item.active {
+      border-color: #b8e67e;
+      box-shadow: inset 0 0 0 1px rgba(168, 220, 101, 0.45);
+    }
+
+    .inventory-item .block-icon {
+      width: 41px;
+      height: 41px;
+    }
+
+    .inventory-item-name {
+      max-width: 100%;
+      overflow: hidden;
+      color: #d8ded9;
+      font-size: 10px;
+      font-weight: 750;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .inventory-item-count {
+      position: absolute;
+      top: 7px;
+      right: 8px;
+      color: #a9d775;
+      font: 800 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    .inventory-footer {
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      margin-top: 18px;
+      padding-top: 17px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    #death-screen {
+      z-index: 35;
+      background: rgba(42, 5, 3, 0.62);
+      backdrop-filter: blur(10px) grayscale(0.45);
+    }
+
+    #death-screen .panel-card {
+      text-align: center;
+    }
+
+    #death-screen h2 {
+      color: #ff9a85;
+      font-size: 30px;
+    }
+
+    .touch-ui {
+      display: none;
+    }
+
+    #touch-joystick {
+      position: fixed;
+      z-index: 12;
+      left: max(24px, env(safe-area-inset-left));
+      bottom: max(110px, calc(env(safe-area-inset-bottom) + 96px));
+      width: 104px;
+      height: 104px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 50%;
+      background: rgba(7, 12, 14, 0.34);
+      box-shadow: inset 0 0 28px rgba(0, 0, 0, 0.25);
+      pointer-events: auto;
+      backdrop-filter: blur(6px);
+    }
+
+    #touch-stick {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 46px;
+      height: 46px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.14);
+      transform: translate(-50%, -50%);
+    }
+
+    #touch-actions {
+      position: fixed;
+      z-index: 12;
+      right: max(18px, env(safe-area-inset-right));
+      bottom: max(104px, calc(env(safe-area-inset-bottom) + 90px));
+      display: grid;
+      grid-template-columns: repeat(2, 58px);
+      gap: 9px;
+      pointer-events: auto;
+    }
+
+    .touch-action {
+      width: 58px;
+      height: 58px;
+      border: 1px solid rgba(255, 255, 255, 0.17);
+      border-radius: 50%;
+      background: rgba(8, 13, 15, 0.48);
+      box-shadow: 0 5px 17px rgba(0, 0, 0, 0.25);
+      color: rgba(255, 255, 255, 0.85);
+      font-size: 9px;
+      font-weight: 850;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      backdrop-filter: blur(7px);
+    }
+
+    .touch-action:active {
+      background: rgba(168, 220, 101, 0.28);
+    }
+
+    #touch-menu {
+      position: fixed;
+      z-index: 13;
+      top: max(14px, env(safe-area-inset-top));
+      right: max(14px, env(safe-area-inset-right));
+      width: 38px;
+      height: 38px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 9px;
+      background: rgba(8, 13, 15, 0.48);
+      color: white;
+      pointer-events: auto;
+      backdrop-filter: blur(7px);
+    }
+
+    @media (max-width: 760px) {
+      .start-layout {
+        grid-template-columns: 1fr;
+      }
+
+      .start-hero {
+        min-height: 255px;
+        padding: 28px;
+      }
+
+      .game-title {
+        font-size: clamp(43px, 14vw, 70px);
+      }
+
+      .tagline {
+        margin-top: 18px;
+        font-size: 13px;
+      }
+
+      .feature-row {
+        margin-top: 18px;
+      }
+
+      .start-side {
+        min-height: auto;
+        padding: 27px;
+        border-top: 1px solid rgba(255, 255, 255, 0.09);
+        border-left: 0;
+      }
+
+      .controls-list {
+        display: none;
+      }
+
+      .loading-zone {
+        margin-top: 20px;
+      }
+
+      #inventory-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      #hotbar {
+        max-width: calc(100vw - 12px);
+        gap: 2px;
+        padding: 4px;
+      }
+
+      .slot {
+        width: min(47px, 10vw);
+        height: min(47px, 10vw);
+      }
+
+      .slot .block-icon {
+        width: min(30px, 6.5vw);
+        height: min(30px, 6.5vw);
+      }
+
+      #stats-panel,
+      #hand {
+        display: none;
+      }
+
+      #vitals {
+        bottom: max(76px, calc(env(safe-area-inset-bottom) + 67px));
+      }
+    }
+
+    @media (pointer: coarse) {
+      .touch-ui.playing {
+        display: block;
+      }
+
+      #world-strip {
+        left: 14px;
+        min-width: 0;
+        transform: none;
+      }
+
+      #crosshair {
+        opacity: 0.8;
+      }
+
+      #vitals {
+        display: none;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="game-root" aria-label="Blockbound voxel world"></div>
+  <div class="screen-shade"></div>
+  <div class="screen-vignette"></div>
+  <div id="damage-flash"></div>
+
+  <div id="hud" aria-hidden="true">
+    <div id="world-strip">
+      <span id="day-label">Day 1 · Morning</span>
+      <span class="dot"></span>
+      <span id="biome-label" class="biome">Meadow</span>
+      <span class="dot"></span>
+      <span id="weather-label">Clear</span>
+    </div>
+
+    <div id="stats-panel">
+      <span id="coords-label">XYZ 0 / 0 / 0</span>
+      <span id="chunk-label">CHUNK 0 / 0 · 0 FPS</span>
+    </div>
+
+    <div id="vitals">
+      <div id="hearts" aria-label="Health"></div>
+      <div>
+        <div class="meter-label"><span>Stamina</span><span id="stamina-copy">100</span></div>
+        <div id="stamina-meter" class="meter"><span></span></div>
+      </div>
+    </div>
+
+    <div id="crosshair"><span class="center"></span></div>
+    <div id="mine-ring"></div>
+    <div id="target-card"></div>
+    <div id="hand"></div>
+
+    <div id="hotbar-wrap">
+      <div id="selected-name"></div>
+      <div id="hotbar" aria-label="Hotbar"></div>
+    </div>
+  </div>
+
+  <div id="toast-stack" aria-live="polite"></div>
+
+  <section id="start-screen" class="overlay visible" aria-label="Start screen">
+    <div class="start-layout">
+      <div class="start-hero">
+        <div class="eyebrow">A tiny world with no edges</div>
+        <h1 class="game-title">Block<span>bound</span></h1>
+        <p class="tagline">Explore a living procedural world, shape the terrain, and build somewhere worth returning to. Your progress saves automatically.</p>
+        <div class="feature-row">
+          <span class="chip">Infinite terrain</span>
+          <span class="chip">Day and night</span>
+          <span class="chip">Physics drops</span>
+          <span class="chip">Autosave</span>
+        </div>
+      </div>
+      <div class="start-side">
+        <h2 id="world-title">Preparing world</h2>
+        <div id="seed-line" class="seed-line">Seed 000000</div>
+        <div class="controls-list">
+          <div class="control-row"><span>Move</span><span class="keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span></div>
+          <div class="control-row"><span>Jump and sprint</span><span class="keys"><kbd>Space</kbd><kbd>Shift</kbd></span></div>
+          <div class="control-row"><span>Mine and place</span><span class="keys"><kbd>LMB</kbd><kbd>RMB</kbd></span></div>
+          <div class="control-row"><span>Inventory</span><span class="keys"><kbd>E</kbd></span></div>
+          <div class="control-row"><span>Select blocks</span><span class="keys"><kbd>1-9</kbd><kbd>Wheel</kbd></span></div>
+        </div>
+        <div class="loading-zone">
+          <div class="loading-copy"><span id="loading-copy">Growing terrain</span><span id="loading-percent">0%</span></div>
+          <div class="loading-track"><div id="loading-bar"></div></div>
+        </div>
+        <button id="start-button" class="primary-btn" type="button" disabled>Enter world</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="pause-screen" class="overlay" aria-label="Pause menu">
+    <div class="panel-card">
+      <h2>World paused</h2>
+      <p>Your terrain and inventory are safe. Jump back in whenever you are ready.</p>
+      <div class="button-stack">
+        <button id="resume-button" class="primary-btn" type="button">Resume</button>
+        <button id="inventory-button" class="secondary-btn" type="button">Open inventory</button>
+      </div>
+      <div class="settings-row">
+        <label for="render-distance">Render distance</label>
+        <select id="render-distance">
+          <option value="2">Near</option>
+          <option value="3" selected>Balanced</option>
+          <option value="4">Far</option>
+        </select>
+        <label for="sound-toggle">Sound</label>
+        <select id="sound-toggle">
+          <option value="on" selected>On</option>
+          <option value="off">Off</option>
+        </select>
+      </div>
+      <div class="button-stack">
+        <button id="save-button" class="secondary-btn" type="button">Save now</button>
+        <button id="new-world-button" class="danger-btn" type="button">Create new world</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="inventory-screen" class="overlay" aria-label="Inventory">
+    <div class="inventory-card">
+      <div class="inventory-head">
+        <div>
+          <h2>Block inventory</h2>
+          <p>Choose a block to assign it to the selected hotbar slot.</p>
+        </div>
+        <button id="inventory-close" class="icon-btn" type="button" aria-label="Close inventory">×</button>
+      </div>
+      <div id="inventory-grid"></div>
+      <div class="inventory-footer">
+        <span>Mine blocks to collect more.</span>
+        <span>Selected slot: <strong id="selected-slot-copy">1</strong></span>
+      </div>
+    </div>
+  </section>
+
+  <section id="death-screen" class="overlay" aria-label="Respawn screen">
+    <div class="panel-card">
+      <h2>You lost your footing</h2>
+      <p>The world keeps your blocks and inventory. You will return near your original spawn.</p>
+      <button id="respawn-button" class="primary-btn" type="button">Respawn</button>
+    </div>
+  </section>
+
+  <div id="touch-controls" class="touch-ui">
+    <div id="touch-joystick"><div id="touch-stick"></div></div>
+    <div id="touch-actions">
+      <button id="touch-jump" class="touch-action" type="button">Jump</button>
+      <button id="touch-mine" class="touch-action" type="button">Mine</button>
+      <button id="touch-place" class="touch-action" type="button">Place</button>
+      <button id="touch-bag" class="touch-action" type="button">Blocks</button>
+    </div>
+    <button id="touch-menu" type="button" aria-label="Pause">Ⅱ</button>
+  </div>
+
+  <div id="boot-fallback">
+    <div class="fatal-card">
+      <h2>The world could not start</h2>
+      <p id="fatal-copy">Check your connection and reload this page. The 3D engine could not be loaded.</p>
+    </div>
+  </div>
+
+  <script>
+    window.__BLOCKBOUND_BOOT__ = { started: false, ready: false, errors: [] };
+    window.addEventListener("error", (event) => {
+      window.__BLOCKBOUND_BOOT__.errors.push(String(event.message || event.error || "Unknown error"));
+    });
+    window.addEventListener("unhandledrejection", (event) => {
+      window.__BLOCKBOUND_BOOT__.errors.push(String(event.reason || "Unhandled promise rejection"));
+    });
+    window.setTimeout(() => {
+      if (!window.__BLOCKBOUND_BOOT__.started) {
+        document.getElementById("boot-fallback").style.display = "grid";
+      }
+    }, 9000);
+  </script>
+
+  <script type="module">
+    import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.168.0/build/three.module.js";
+
+    window.__BLOCKBOUND_BOOT__.started = true;
+
+    const $ = (selector) => document.querySelector(selector);
+    const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+    const lerp = (a, b, t) => a + (b - a) * t;
+    const smoothstep = (t) => t * t * (3 - 2 * t);
+    const TAU = Math.PI * 2;
+
+    const CONFIG = Object.freeze({
+      chunkSize: 16,
+      worldHeight: 48,
+      seaLevel: 13,
+      reach: 6,
+      playerRadius: 0.32,
+      playerHeight: 1.78,
+      eyeHeight: 1.61,
+      gravity: 24,
+      jumpSpeed: 8.25,
+      walkSpeed: 4.8,
+      sprintSpeed: 7.25,
+      swimSpeed: 3.25,
+      dayLength: 540,
+      maxDrops: 90
+    });
+
+    const BLOCK = Object.freeze({
+      AIR: 0,
+      GRASS: 1,
+      DIRT: 2,
+      STONE: 3,
+      SAND: 4,
+      LOG: 5,
+      LEAVES: 6,
+      COBBLE: 7,
+      PLANKS: 8,
+      SNOW: 9,
+      BRICKS: 10,
+      WATER: 11,
+      BEDROCK: 12,
+      COAL_ORE: 13,
+      IRON_ORE: 14,
+      GLASS: 15
+    });
+
+    const TILE = Object.freeze({
+      GRASS_TOP: 0,
+      GRASS_SIDE: 1,
+      DIRT: 2,
+      STONE: 3,
+      SAND: 4,
+      LOG_SIDE: 5,
+      LOG_TOP: 6,
+      LEAVES: 7,
+      COBBLE: 8,
+      PLANKS: 9,
+      SNOW: 10,
+      SNOW_SIDE: 11,
+      WATER: 12,
+      BEDROCK: 13,
+      COAL_ORE: 14,
+      IRON_ORE: 15,
+      BRICKS: 16,
+      GLASS: 17
+    });
+
+    const BLOCK_INFO = Object.freeze({
+      [BLOCK.AIR]: { name: "Air", solid: false, render: "none", color: 0xffffff, hardness: 0, tiles: [0, 0, 0] },
+      [BLOCK.GRASS]: { name: "Grass", color: 0x70a64a, hardness: 0.42, drop: BLOCK.DIRT, tiles: [TILE.GRASS_TOP, TILE.GRASS_SIDE, TILE.DIRT] },
+      [BLOCK.DIRT]: { name: "Dirt", color: 0x8d623f, hardness: 0.45, drop: BLOCK.DIRT, tiles: [TILE.DIRT, TILE.DIRT, TILE.DIRT] },
+      [BLOCK.STONE]: { name: "Stone", color: 0x858887, hardness: 1.15, drop: BLOCK.COBBLE, tiles: [TILE.STONE, TILE.STONE, TILE.STONE] },
+      [BLOCK.SAND]: { name: "Sand", color: 0xd7c27d, hardness: 0.35, drop: BLOCK.SAND, tiles: [TILE.SAND, TILE.SAND, TILE.SAND] },
+      [BLOCK.LOG]: { name: "Oak log", color: 0x8b633c, hardness: 0.85, drop: BLOCK.LOG, tiles: [TILE.LOG_TOP, TILE.LOG_SIDE, TILE.LOG_TOP] },
+      [BLOCK.LEAVES]: { name: "Oak leaves", color: 0x4e8e43, hardness: 0.2, drop: BLOCK.LEAVES, tiles: [TILE.LEAVES, TILE.LEAVES, TILE.LEAVES] },
+      [BLOCK.COBBLE]: { name: "Cobblestone", color: 0x737774, hardness: 1.0, drop: BLOCK.COBBLE, tiles: [TILE.COBBLE, TILE.COBBLE, TILE.COBBLE] },
+      [BLOCK.PLANKS]: { name: "Oak planks", color: 0xb48351, hardness: 0.7, drop: BLOCK.PLANKS, tiles: [TILE.PLANKS, TILE.PLANKS, TILE.PLANKS] },
+      [BLOCK.SNOW]: { name: "Snow", color: 0xe8f1ee, hardness: 0.32, drop: BLOCK.SNOW, tiles: [TILE.SNOW, TILE.SNOW_SIDE, TILE.DIRT] },
+      [BLOCK.BRICKS]: { name: "Bricks", color: 0xa15d4d, hardness: 1.2, drop: BLOCK.BRICKS, tiles: [TILE.BRICKS, TILE.BRICKS, TILE.BRICKS] },
+      [BLOCK.WATER]: { name: "Water", solid: false, render: "water", color: 0x4d96bd, hardness: Infinity, tiles: [TILE.WATER, TILE.WATER, TILE.WATER] },
+      [BLOCK.BEDROCK]: { name: "Bedrock", color: 0x343938, hardness: Infinity, tiles: [TILE.BEDROCK, TILE.BEDROCK, TILE.BEDROCK] },
+      [BLOCK.COAL_ORE]: { name: "Coal ore", color: 0x626665, hardness: 1.25, drop: BLOCK.COAL_ORE, tiles: [TILE.COAL_ORE, TILE.COAL_ORE, TILE.COAL_ORE] },
+      [BLOCK.IRON_ORE]: { name: "Iron ore", color: 0x9a806f, hardness: 1.35, drop: BLOCK.IRON_ORE, tiles: [TILE.IRON_ORE, TILE.IRON_ORE, TILE.IRON_ORE] },
+      [BLOCK.GLASS]: { name: "Glass", render: "glass", color: 0xb9e1e5, hardness: 0.28, drop: BLOCK.GLASS, tiles: [TILE.GLASS, TILE.GLASS, TILE.GLASS] }
+    });
+
+    const PLACEABLE_BLOCKS = [
+      BLOCK.GRASS,
+      BLOCK.DIRT,
+      BLOCK.COBBLE,
+      BLOCK.PLANKS,
+      BLOCK.SAND,
+      BLOCK.LOG,
+      BLOCK.LEAVES,
+      BLOCK.SNOW,
+      BLOCK.BRICKS,
+      BLOCK.COAL_ORE,
+      BLOCK.IRON_ORE,
+      BLOCK.GLASS
+    ];
+
+    const missingBlockMetadata = Object.values(BLOCK).filter((id) => !BLOCK_INFO[id]);
+    if (missingBlockMetadata.length) {
+      throw new Error(`Missing block metadata: ${missingBlockMetadata.join(", ")}`);
+    }
+
+    const SAVE_KEY = "blockbound-save-v4";
+    let storedSave = null;
+    try {
+      storedSave = JSON.parse(localStorage.getItem(SAVE_KEY) || "null");
+      if (!storedSave || storedSave.version !== 4) storedSave = null;
+    } catch {
+      storedSave = null;
+    }
+
+    let seed = storedSave?.seed;
+    if (!Number.isInteger(seed)) {
+      seed = (crypto.getRandomValues(new Uint32Array(1))[0] & 0x7fffffff) || 7331;
+    }
+
+    const state = {
+      mode: "loading",
+      hasEntered: false,
+      worldReady: false,
+      selectedSlot: clamp(storedSave?.selectedSlot ?? 0, 0, 8),
+      hotbar: Array.isArray(storedSave?.hotbar) && storedSave.hotbar.length === 9
+        ? storedSave.hotbar.map((id, index) => BLOCK_INFO[id] ? id : PLACEABLE_BLOCKS[index] || BLOCK.DIRT)
+        : [BLOCK.DIRT, BLOCK.COBBLE, BLOCK.PLANKS, BLOCK.SAND, BLOCK.LOG, BLOCK.GLASS, BLOCK.BRICKS, BLOCK.SNOW, BLOCK.LEAVES],
+      inventory: {
+        [BLOCK.DIRT]: 16,
+        [BLOCK.COBBLE]: 10,
+        [BLOCK.PLANKS]: 16,
+        [BLOCK.SAND]: 8,
+        [BLOCK.GLASS]: 8,
+        [BLOCK.BRICKS]: 8,
+        ...(storedSave?.inventory || {})
+      },
+      worldTime: Number.isFinite(storedSave?.worldTime) ? storedSave.worldTime : 0.22,
+      day: Number.isFinite(storedSave?.day) ? Math.max(1, storedSave.day) : 1,
+      renderDistance: clamp(storedSave?.renderDistance ?? 3, 2, 4),
+      sound: storedSave?.sound !== false,
+      stats: {
+        mined: storedSave?.stats?.mined || 0,
+        placed: storedSave?.stats?.placed || 0,
+        distance: storedSave?.stats?.distance || 0
+      },
+      savePending: false,
+      lastSave: performance.now()
+    };
+
+    for (const id of PLACEABLE_BLOCKS) {
+      state.inventory[id] = Math.max(0, Number(state.inventory[id]) || 0);
+    }
+
+    const ui = {
+      hud: $("#hud"),
+      start: $("#start-screen"),
+      pause: $("#pause-screen"),
+      inventory: $("#inventory-screen"),
+      death: $("#death-screen"),
+      startButton: $("#start-button"),
+      resumeButton: $("#resume-button"),
+      inventoryButton: $("#inventory-button"),
+      inventoryClose: $("#inventory-close"),
+      respawnButton: $("#respawn-button"),
+      hotbar: $("#hotbar"),
+      inventoryGrid: $("#inventory-grid"),
+      selectedName: $("#selected-name"),
+      selectedSlotCopy: $("#selected-slot-copy"),
+      targetCard: $("#target-card"),
+      mineRing: $("#mine-ring"),
+      hearts: $("#hearts"),
+      stamina: $("#stamina-meter"),
+      staminaCopy: $("#stamina-copy"),
+      coords: $("#coords-label"),
+      chunk: $("#chunk-label"),
+      day: $("#day-label"),
+      biome: $("#biome-label"),
+      weather: $("#weather-label"),
+      loadingBar: $("#loading-bar"),
+      loadingPercent: $("#loading-percent"),
+      loadingCopy: $("#loading-copy"),
+      seed: $("#seed-line"),
+      worldTitle: $("#world-title"),
+      hand: $("#hand"),
+      damage: $("#damage-flash"),
+      renderDistance: $("#render-distance"),
+      soundToggle: $("#sound-toggle"),
+      touch: $("#touch-controls")
+    };
+
+    ui.seed.textContent = `Seed ${seed}`;
+    ui.renderDistance.value = String(state.renderDistance);
+    ui.soundToggle.value = state.sound ? "on" : "off";
+
+    function hash2(x, z, salt = 0) {
+      let h = Math.imul((x | 0) ^ seed ^ salt, 0x27d4eb2d);
+      h = (h + Math.imul((z | 0) ^ (seed >>> 3) ^ salt, 0x165667b1)) | 0;
+      h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
+      h ^= h >>> 13;
+      return (h >>> 0) / 4294967295;
+    }
+
+    function hash3(x, y, z, salt = 0) {
+      let h = Math.imul((x | 0) ^ seed ^ salt, 0x9e3779b1);
+      h = (h + Math.imul((y | 0) ^ (seed >>> 5), 0x85ebca77)) | 0;
+      h = (h + Math.imul((z | 0) ^ (seed << 2), 0xc2b2ae3d)) | 0;
+      h = Math.imul(h ^ (h >>> 16), 0x27d4eb2d);
+      return ((h ^ (h >>> 15)) >>> 0) / 4294967295;
+    }
+
+    function valueNoise2(x, z, salt = 0) {
+      const ix = Math.floor(x);
+      const iz = Math.floor(z);
+      const fx = smoothstep(x - ix);
+      const fz = smoothstep(z - iz);
+      const a = hash2(ix, iz, salt);
+      const b = hash2(ix + 1, iz, salt);
+      const c = hash2(ix, iz + 1, salt);
+      const d = hash2(ix + 1, iz + 1, salt);
+      return lerp(lerp(a, b, fx), lerp(c, d, fx), fz);
+    }
+
+    function valueNoise3(x, y, z, salt = 0) {
+      const ix = Math.floor(x);
+      const iy = Math.floor(y);
+      const iz = Math.floor(z);
+      const fx = smoothstep(x - ix);
+      const fy = smoothstep(y - iy);
+      const fz = smoothstep(z - iz);
+      const n000 = hash3(ix, iy, iz, salt);
+      const n100 = hash3(ix + 1, iy, iz, salt);
+      const n010 = hash3(ix, iy + 1, iz, salt);
+      const n110 = hash3(ix + 1, iy + 1, iz, salt);
+      const n001 = hash3(ix, iy, iz + 1, salt);
+      const n101 = hash3(ix + 1, iy, iz + 1, salt);
+      const n011 = hash3(ix, iy + 1, iz + 1, salt);
+      const n111 = hash3(ix + 1, iy + 1, iz + 1, salt);
+      const x00 = lerp(n000, n100, fx);
+      const x10 = lerp(n010, n110, fx);
+      const x01 = lerp(n001, n101, fx);
+      const x11 = lerp(n011, n111, fx);
+      return lerp(lerp(x00, x10, fy), lerp(x01, x11, fy), fz);
+    }
+
+    function fbm2(x, z, octaves = 4, salt = 0) {
+      let value = 0;
+      let amplitude = 0.5;
+      let frequency = 1;
+      let total = 0;
+      for (let octave = 0; octave < octaves; octave++) {
+        value += valueNoise2(x * frequency, z * frequency, salt + octave * 101) * amplitude;
+        total += amplitude;
+        amplitude *= 0.5;
+        frequency *= 2.03;
+      }
+      return value / total;
+    }
+
+    function biomeAt(x, z, height = null) {
+      const elevation = height ?? heightAt(x, z);
+      const temperature = fbm2(x * 0.0032 + 80, z * 0.0032 - 60, 3, 170);
+      const moisture = fbm2(x * 0.0041 - 110, z * 0.0041 + 35, 3, 270);
+      if (elevation >= 31) return "Alpine";
+      if (temperature > 0.68 && moisture < 0.46) return "Dunes";
+      if (moisture > 0.61) return "Woodland";
+      if (temperature < 0.34 && elevation > 22) return "Tundra";
+      return "Meadow";
+    }
+
+    function heightAt(x, z) {
+      const continent = fbm2(x * 0.0042, z * 0.0042, 5, 11);
+      const hills = fbm2(x * 0.013, z * 0.013, 4, 31);
+      const detail = fbm2(x * 0.041, z * 0.041, 2, 71);
+      const ridgeNoise = fbm2(x * 0.008 + 90, z * 0.008 - 90, 3, 91);
+      const ridges = 1 - Math.abs(ridgeNoise * 2 - 1);
+      const broad = (continent - 0.46) * 24;
+      const relief = Math.pow(clamp((continent - 0.38) / 0.62, 0, 1), 1.6) * ridges * 12;
+      return clamp(Math.floor(14 + broad + hills * 7 + detail * 2 + relief), 5, CONFIG.worldHeight - 8);
+    }
+
+    function caveAt(x, y, z, surface) {
+      if (y <= 3 || y >= surface - 3) return false;
+      const primary = valueNoise3(x * 0.075, y * 0.085, z * 0.075, 401);
+      const ribbon = valueNoise3(x * 0.035 + 40, y * 0.065, z * 0.035 - 30, 503);
+      return primary > 0.73 && ribbon > 0.46;
+    }
+
+    function baseBlockAt(x, y, z) {
+      if (y < 0 || y >= CONFIG.worldHeight) return BLOCK.AIR;
+      if (y === 0) return BLOCK.BEDROCK;
+      const surface = heightAt(x, z);
+      if (y > surface) return y <= CONFIG.seaLevel ? BLOCK.WATER : BLOCK.AIR;
+      const biome = biomeAt(x, z, surface);
+      const depth = surface - y;
+      if (depth > 3 && caveAt(x, y, z, surface)) return BLOCK.AIR;
+      if (depth === 0) {
+        if (biome === "Dunes" || surface <= CONFIG.seaLevel + 1) return BLOCK.SAND;
+        if (biome === "Alpine" || biome === "Tundra") return BLOCK.SNOW;
+        if (surface > 33) return BLOCK.STONE;
+        return BLOCK.GRASS;
+      }
+      if (depth <= 3) {
+        if (biome === "Dunes" || surface <= CONFIG.seaLevel + 1) return BLOCK.SAND;
+        return BLOCK.DIRT;
+      }
+      const ore = hash3(x, y, z, 810);
+      if (y < 16 && ore > 0.974) return BLOCK.IRON_ORE;
+      if (y < 26 && ore > 0.947) return BLOCK.COAL_ORE;
+      return BLOCK.STONE;
+    }
+
+    function treeAt(x, z) {
+      const surface = heightAt(x, z);
+      if (surface <= CONFIG.seaLevel + 1 || surface >= 30) return false;
+      const biome = biomeAt(x, z, surface);
+      if (biome !== "Woodland" && biome !== "Meadow") return false;
+      const chance = hash2(x, z, 1301);
+      const threshold = biome === "Woodland" ? 0.945 : 0.985;
+      if (chance < threshold) return false;
+      const slope = Math.max(
+        Math.abs(heightAt(x + 1, z) - surface),
+        Math.abs(heightAt(x - 1, z) - surface),
+        Math.abs(heightAt(x, z + 1) - surface),
+        Math.abs(heightAt(x, z - 1) - surface)
+      );
+      if (slope > 1) return false;
+      for (let ox = -2; ox <= 2; ox++) {
+        for (let oz = -2; oz <= 2; oz++) {
+          if (ox === 0 && oz === 0) continue;
+          if (hash2(x + ox, z + oz, 1301) > chance) return false;
+        }
+      }
+      return true;
+    }
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.05, 360);
+    camera.rotation.order = "YXZ";
+
+    let renderer;
+    try {
+      renderer = new THREE.WebGLRenderer({
+        antialias: true,
+        alpha: false,
+        powerPreference: "high-performance"
+      });
+    } catch (error) {
+      $("#boot-fallback").style.display = "grid";
+      $("#fatal-copy").textContent = `WebGL could not start: ${error.message}`;
+      throw error;
+    }
+
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 1.8));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
+    renderer.domElement.id = "game-canvas";
+    renderer.domElement.tabIndex = 0;
+    $("#game-root").appendChild(renderer.domElement);
+
+    const hemiLight = new THREE.HemisphereLight(0xbde0ff, 0x40502e, 1.4);
+    scene.add(hemiLight);
+
+    const sunLight = new THREE.DirectionalLight(0xffefd0, 2.15);
+    sunLight.position.set(38, 64, 26);
+    scene.add(sunLight);
+
+    scene.fog = new THREE.Fog(0x9cc5d0, 46, 96);
+
+    const skyUniforms = {
+      topColor: { value: new THREE.Color(0x508cc0) },
+      bottomColor: { value: new THREE.Color(0xc4d9d3) },
+      offset: { value: 18 },
+      exponent: { value: 0.72 }
+    };
+
+    const sky = new THREE.Mesh(
+      new THREE.SphereGeometry(260, 28, 18),
+      new THREE.ShaderMaterial({
+        uniforms: skyUniforms,
+        vertexShader: `
+          varying vec3 vWorldPosition;
+          void main() {
+            vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+            vWorldPosition = worldPosition.xyz;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          uniform vec3 topColor;
+          uniform vec3 bottomColor;
+          uniform float offset;
+          uniform float exponent;
+          varying vec3 vWorldPosition;
+          void main() {
+            float h = normalize(vWorldPosition + vec3(0.0, offset, 0.0)).y;
+            float f = max(pow(max(h, 0.0), exponent), 0.0);
+            gl_FragColor = vec4(mix(bottomColor, topColor, f), 1.0);
+          }
+        `,
+        side: THREE.BackSide,
+        depthWrite: false,
+        fog: false
+      })
+    );
+    sky.frustumCulled = false;
+    sky.renderOrder = -100;
+    scene.add(sky);
+
+    const sunMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(7, 16, 12),
+      new THREE.MeshBasicMaterial({ color: 0xffefb0, fog: false, toneMapped: false })
+    );
+    sunMesh.renderOrder = -10;
+    scene.add(sunMesh);
+
+    const moonMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(5.5, 16, 12),
+      new THREE.MeshBasicMaterial({ color: 0xd8ecff, fog: false, toneMapped: false })
+    );
+    moonMesh.renderOrder = -10;
+    scene.add(moonMesh);
+
+    const starPositions = [];
+    for (let i = 0; i < 650; i++) {
+      const u = hash2(i, 19, 3311);
+      const v = hash2(i, 47, 3319);
+      const theta = u * TAU;
+      const phi = Math.acos(lerp(-0.12, 1, v));
+      const radius = 225;
+      starPositions.push(
+        Math.sin(phi) * Math.cos(theta) * radius,
+        Math.cos(phi) * radius,
+        Math.sin(phi) * Math.sin(theta) * radius
+      );
+    }
+    const starGeometry = new THREE.BufferGeometry();
+    starGeometry.setAttribute("position", new THREE.Float32BufferAttribute(starPositions, 3));
+    const starMaterial = new THREE.PointsMaterial({
+      color: 0xe8f2ff,
+      size: 0.72,
+      sizeAttenuation: false,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      fog: false,
+      toneMapped: false
+    });
+    const stars = new THREE.Points(starGeometry, starMaterial);
+    stars.frustumCulled = false;
+    scene.add(stars);
+
+    const cloudMaterial = new THREE.MeshLambertMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.48,
+      depthWrite: false
+    });
+    const cloudGeometry = new THREE.BoxGeometry(1, 1, 1);
+    const clouds = new THREE.Group();
+    scene.add(clouds);
+    for (let i = 0; i < 13; i++) {
+      const cloud = new THREE.Group();
+      const pieces = 3 + Math.floor(hash2(i, 7, 1711) * 4);
+      for (let j = 0; j < pieces; j++) {
+        const piece = new THREE.Mesh(cloudGeometry, cloudMaterial);
+        piece.scale.set(
+          5 + hash2(i, j, 1721) * 8,
+          1.1 + hash2(j, i, 1731) * 1.5,
+          3 + hash2(i + j, 2, 1741) * 5
+        );
+        piece.position.set((j - pieces / 2) * 5.5, hash2(j, i, 1751) * 1.2, (hash2(j, i, 1761) - 0.5) * 7);
+        cloud.add(piece);
+      }
+      cloud.userData.speed = 0.42 + hash2(i, 1, 1771) * 0.28;
+      cloud.position.set(
+        (hash2(i, 3, 1781) - 0.5) * 180,
+        38 + hash2(i, 5, 1791) * 8,
+        (hash2(i, 9, 1801) - 0.5) * 180
+      );
+      clouds.add(cloud);
+    }
+
+    const ATLAS_COLS = 6;
+    const ATLAS_ROWS = 3;
+    const TILE_SIZE = 16;
+
+    function pixelChoice(x, y, tile, colors) {
+      const value = hash3(x + tile * 23, y, tile, 991);
+      return colors[Math.floor(value * colors.length) % colors.length];
+    }
+
+    function createTextureAtlas() {
+      const canvas = document.createElement("canvas");
+      canvas.width = ATLAS_COLS * TILE_SIZE;
+      canvas.height = ATLAS_ROWS * TILE_SIZE;
+      const context = canvas.getContext("2d", { alpha: true });
+      context.imageSmoothingEnabled = false;
+
+      const paint = (tile, colors, pixelFn = null) => {
+        const ox = (tile % ATLAS_COLS) * TILE_SIZE;
+        const oy = Math.floor(tile / ATLAS_COLS) * TILE_SIZE;
+        context.clearRect(ox, oy, TILE_SIZE, TILE_SIZE);
+        for (let y = 0; y < TILE_SIZE; y++) {
+          for (let x = 0; x < TILE_SIZE; x++) {
+            const custom = pixelFn?.(x, y, ox, oy);
+            if (custom === "transparent") continue;
+            context.fillStyle = custom || pixelChoice(x, y, tile, colors);
+            context.fillRect(ox + x, oy + y, 1, 1);
+          }
+        }
+      };
+
+      paint(TILE.GRASS_TOP, ["#709e42", "#78a94a", "#5f8f38", "#83af50"], (x, y) => {
+        if ((x + y * 3) % 19 === 0) return "#a2bd5d";
+        return null;
+      });
+      paint(TILE.GRASS_SIDE, ["#855b38", "#91643d", "#7b5233"], (x, y) => {
+        if (y < 3) return pixelChoice(x, y, TILE.GRASS_TOP, ["#6e9f40", "#80ad4b", "#5f8f38"]);
+        if (y < 6 && hash3(x, y, 2, 1201) > 0.68) return "#69963d";
+        return null;
+      });
+      paint(TILE.DIRT, ["#815637", "#936440", "#754b31", "#a16d45"]);
+      paint(TILE.STONE, ["#7e8382", "#898e8c", "#707574", "#969a97"], (x, y) => {
+        if ((x * 5 + y * 7) % 31 === 0) return "#606563";
+        return null;
+      });
+      paint(TILE.SAND, ["#d9c580", "#e1cf8e", "#cdb875", "#ead797"]);
+      paint(TILE.LOG_SIDE, ["#7d5432", "#8e633b", "#6c472c", "#9c7044"], (x) => {
+        if (x % 5 === 0) return "#654126";
+        return null;
+      });
+      paint(TILE.LOG_TOP, ["#a47445", "#b1814e", "#8c603a"], (x, y) => {
+        const d = Math.max(Math.abs(x - 7.5), Math.abs(y - 7.5));
+        if (Math.floor(d) % 3 === 0) return "#6f4b2d";
+        return null;
+      });
+      paint(TILE.LEAVES, ["#477f3b", "#559347", "#3d7135", "#65a052"], (x, y) => {
+        if (hash3(x, y, 7, 1401) > 0.86) return "transparent";
+        if ((x + y) % 11 === 0) return "#78ad5a";
+        return null;
+      });
+      paint(TILE.COBBLE, ["#707573", "#7c817f", "#626765", "#8a8f8c"], (x, y) => {
+        if (x % 5 === 0 || y % 6 === 0) return hash3(x, y, 8, 1501) > 0.45 ? "#565b59" : null;
+        return null;
+      });
+      paint(TILE.PLANKS, ["#ad7b48", "#ba8750", "#9c6b40", "#c18f57"], (x, y) => {
+        if (y % 5 === 0) return "#79502f";
+        if ((x + y * 2) % 23 === 0) return "#6c472b";
+        return null;
+      });
+      paint(TILE.SNOW, ["#f0f5f2", "#e4eeec", "#f8faf7", "#d9e7e6"]);
+      paint(TILE.SNOW_SIDE, ["#8a6543", "#966d47", "#805b3e"], (x, y) => {
+        if (y < 4) return pixelChoice(x, y, TILE.SNOW, ["#eef5f3", "#dce9e8", "#f7faf8"]);
+        return null;
+      });
+      paint(TILE.WATER, ["#3986b2", "#438fba", "#347aa5", "#4c98c0"], (x, y) => {
+        if ((x + y * 2) % 13 === 0) return "#6fb1cf";
+        return null;
+      });
+      paint(TILE.BEDROCK, ["#323736", "#414644", "#282c2b", "#555a57"]);
+      paint(TILE.COAL_ORE, ["#7b807e", "#858a87", "#6d7270"], (x, y) => {
+        if (hash3(x >> 1, y >> 1, 14, 1601) > 0.69) return "#252a29";
+        return null;
+      });
+      paint(TILE.IRON_ORE, ["#7d817e", "#8a8d89", "#717572"], (x, y) => {
+        if (hash3(x >> 1, y >> 1, 15, 1611) > 0.7) return "#b17b5c";
+        return null;
+      });
+      paint(TILE.BRICKS, ["#9d5849", "#ab6352", "#8f4d42", "#ba6c57"], (x, y) => {
+        if (y % 5 === 0 || (x + (Math.floor(y / 5) % 2) * 4) % 8 === 0) return "#5c4a43";
+        return null;
+      });
+      paint(TILE.GLASS, ["rgba(169,218,225,0.14)"], (x, y) => {
+        if (x === 0 || y === 0 || x === 15 || y === 15) return "rgba(221,249,250,0.9)";
+        if (x === y && x < 6) return "rgba(255,255,255,0.55)";
+        return "rgba(147,211,222,0.18)";
+      });
+
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.magFilter = THREE.NearestFilter;
+      texture.minFilter = THREE.NearestMipmapNearestFilter;
+      texture.generateMipmaps = true;
+      texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+      return { canvas, texture, url: canvas.toDataURL("image/png") };
+    }
+
+    const atlas = createTextureAtlas();
+    const opaqueMaterial = new THREE.MeshLambertMaterial({
+      map: atlas.texture,
+      vertexColors: true,
+      alphaTest: 0.42
+    });
+    const waterMaterial = new THREE.MeshPhongMaterial({
+      map: atlas.texture,
+      color: 0x92c8df,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.67,
+      depthWrite: false,
+      shininess: 75
+    });
+    const glassMaterial = new THREE.MeshPhongMaterial({
+      map: atlas.texture,
+      color: 0xd9f5f5,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.54,
+      depthWrite: false,
+      shininess: 90,
+      side: THREE.DoubleSide
+    });
+
+    function applyIcon(element, id) {
+      const info = BLOCK_INFO[id] || BLOCK_INFO[BLOCK.DIRT];
+      const tile = info.tiles[1] ?? info.tiles[0];
+      const col = tile % ATLAS_COLS;
+      const row = Math.floor(tile / ATLAS_COLS);
+      element.style.backgroundImage = `url("${atlas.url}")`;
+      element.style.backgroundSize = `${ATLAS_COLS * 100}% ${ATLAS_ROWS * 100}%`;
+      element.style.backgroundPosition = `${ATLAS_COLS === 1 ? 0 : col / (ATLAS_COLS - 1) * 100}% ${ATLAS_ROWS === 1 ? 0 : row / (ATLAS_ROWS - 1) * 100}%`;
+      element.style.backgroundColor = `#${info.color.toString(16).padStart(6, "0")}`;
+    }
+
+    const FACE_DEFS = [
+      { dir: [1, 0, 0], shade: 0.83, tileFace: 1, corners: [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 1]] },
+      { dir: [-1, 0, 0], shade: 0.76, tileFace: 1, corners: [[0, 0, 1], [0, 1, 1], [0, 1, 0], [0, 0, 0]] },
+      { dir: [0, 1, 0], shade: 1.0, tileFace: 0, corners: [[0, 1, 1], [1, 1, 1], [1, 1, 0], [0, 1, 0]] },
+      { dir: [0, -1, 0], shade: 0.58, tileFace: 2, corners: [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]] },
+      { dir: [0, 0, 1], shade: 0.89, tileFace: 1, corners: [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]] },
+      { dir: [0, 0, -1], shade: 0.7, tileFace: 1, corners: [[1, 0, 0], [0, 0, 0], [0, 1, 0], [1, 1, 0]] }
+    ];
+
+    const chunks = new Map();
+    const generationQueue = [];
+    const queuedChunks = new Set();
+    const dirtyChunks = new Set();
+    const edits = new Map();
+    const editBuckets = new Map();
+
+    function floorDiv(value, divisor) {
+      return Math.floor(value / divisor);
+    }
+
+    function positiveMod(value, divisor) {
+      return ((value % divisor) + divisor) % divisor;
+    }
+
+    function chunkKey(cx, cz) {
+      return `${cx},${cz}`;
+    }
+
+    function blockKey(x, y, z) {
+      return `${x},${y},${z}`;
+    }
+
+    function localIndex(lx, y, lz) {
+      return y * CONFIG.chunkSize * CONFIG.chunkSize + lz * CONFIG.chunkSize + lx;
+    }
+
+    function bucketEdit(x, y, z, id) {
+      const cx = floorDiv(x, CONFIG.chunkSize);
+      const cz = floorDiv(z, CONFIG.chunkSize);
+      const key = chunkKey(cx, cz);
+      if (!editBuckets.has(key)) editBuckets.set(key, new Map());
+      editBuckets.get(key).set(localIndex(positiveMod(x, CONFIG.chunkSize), y, positiveMod(z, CONFIG.chunkSize)), id);
+    }
+
+    if (Array.isArray(storedSave?.edits)) {
+      for (const entry of storedSave.edits) {
+        if (!Array.isArray(entry) || entry.length !== 4) continue;
+        const [x, y, z, id] = entry.map(Number);
+        if (![x, y, z, id].every(Number.isFinite) || !BLOCK_INFO[id]) continue;
+        edits.set(blockKey(x, y, z), id);
+        bucketEdit(x, y, z, id);
+      }
+    }
+
+    class Chunk {
+      constructor(cx, cz) {
+        this.cx = cx;
+        this.cz = cz;
+        this.key = chunkKey(cx, cz);
+        this.data = new Uint8Array(CONFIG.chunkSize * CONFIG.chunkSize * CONFIG.worldHeight);
+        this.group = new THREE.Group();
+        this.group.position.set(cx * CONFIG.chunkSize, 0, cz * CONFIG.chunkSize);
+        this.group.matrixAutoUpdate = false;
+        this.group.updateMatrix();
+        this.ready = false;
+        this.meshRevision = 0;
+      }
+
+      get(lx, y, lz) {
+        if (y < 0 || y >= CONFIG.worldHeight) return BLOCK.AIR;
+        return this.data[localIndex(lx, y, lz)];
+      }
+
+      set(lx, y, lz, id) {
+        if (y < 0 || y >= CONFIG.worldHeight) return;
+        this.data[localIndex(lx, y, lz)] = id;
+      }
+    }
+
+    function getBlock(x, y, z) {
+      x = Math.floor(x);
+      y = Math.floor(y);
+      z = Math.floor(z);
+      if (y < 0 || y >= CONFIG.worldHeight) return BLOCK.AIR;
+      const override = edits.get(blockKey(x, y, z));
+      if (override !== undefined) return override;
+      const cx = floorDiv(x, CONFIG.chunkSize);
+      const cz = floorDiv(z, CONFIG.chunkSize);
+      const chunk = chunks.get(chunkKey(cx, cz));
+      if (chunk?.ready) {
+        return chunk.get(positiveMod(x, CONFIG.chunkSize), y, positiveMod(z, CONFIG.chunkSize));
+      }
+      return baseBlockAt(x, y, z);
+    }
+
+    function isSolid(id) {
+      return Boolean(BLOCK_INFO[id]?.solid !== false && id !== BLOCK.AIR);
+    }
+
+    function isReplaceable(id) {
+      return id === BLOCK.AIR || id === BLOCK.WATER;
+    }
+
+    function generateChunk(chunk) {
+      const originX = chunk.cx * CONFIG.chunkSize;
+      const originZ = chunk.cz * CONFIG.chunkSize;
+
+      for (let lz = 0; lz < CONFIG.chunkSize; lz++) {
+        for (let lx = 0; lx < CONFIG.chunkSize; lx++) {
+          const x = originX + lx;
+          const z = originZ + lz;
+          for (let y = 0; y < CONFIG.worldHeight; y++) {
+            chunk.set(lx, y, lz, baseBlockAt(x, y, z));
+          }
+        }
+      }
+
+      const writeDecoration = (x, y, z, id, replaceOnly = true) => {
+        if (y < 1 || y >= CONFIG.worldHeight) return;
+        if (floorDiv(x, CONFIG.chunkSize) !== chunk.cx || floorDiv(z, CONFIG.chunkSize) !== chunk.cz) return;
+        const lx = positiveMod(x, CONFIG.chunkSize);
+        const lz = positiveMod(z, CONFIG.chunkSize);
+        const current = chunk.get(lx, y, lz);
+        if (replaceOnly && current !== BLOCK.AIR && current !== BLOCK.WATER && current !== BLOCK.LEAVES) return;
+        chunk.set(lx, y, lz, id);
+      };
+
+      for (let tx = originX - 3; tx < originX + CONFIG.chunkSize + 3; tx++) {
+        for (let tz = originZ - 3; tz < originZ + CONFIG.chunkSize + 3; tz++) {
+          if (!treeAt(tx, tz)) continue;
+          const ground = heightAt(tx, tz);
+          const trunkHeight = 4 + Math.floor(hash2(tx, tz, 1901) * 3);
+          for (let y = 1; y <= trunkHeight; y++) {
+            writeDecoration(tx, ground + y, tz, BLOCK.LOG, false);
+          }
+          const crownY = ground + trunkHeight;
+          for (let ox = -2; ox <= 2; ox++) {
+            for (let oz = -2; oz <= 2; oz++) {
+              for (let oy = -2; oy <= 2; oy++) {
+                const distance = Math.abs(ox) + Math.abs(oz) + Math.abs(oy) * 0.72;
+                const ragged = hash3(tx + ox, crownY + oy, tz + oz, 1911) * 0.65;
+                if (distance + ragged > 3.75) continue;
+                if (ox === 0 && oz === 0 && oy < 1) continue;
+                writeDecoration(tx + ox, crownY + oy, tz + oz, BLOCK.LEAVES, true);
+              }
+            }
+          }
+          writeDecoration(tx, crownY + 2, tz, BLOCK.LEAVES, true);
+        }
+      }
+
+      const bucket = editBuckets.get(chunk.key);
+      if (bucket) {
+        for (const [index, id] of bucket) chunk.data[index] = id;
+      }
+      chunk.ready = true;
+    }
+
+    function faceVisible(id, neighborId) {
+      const render = BLOCK_INFO[id].render || "opaque";
+      if (render === "water") return neighborId === BLOCK.AIR || BLOCK_INFO[neighborId]?.render === "glass";
+      if (render === "glass") return neighborId !== BLOCK.GLASS && (neighborId === BLOCK.AIR || neighborId === BLOCK.WATER);
+      if (id === BLOCK.LEAVES && neighborId === BLOCK.LEAVES) return false;
+      return neighborId === BLOCK.AIR || neighborId === BLOCK.WATER || BLOCK_INFO[neighborId]?.render === "glass";
+    }
+
+    function makeMeshData() {
+      return { positions: [], normals: [], colors: [], uvs: [], indices: [] };
+    }
+
+    function pushFace(data, lx, y, lz, id, face, globalX, globalZ) {
+      const info = BLOCK_INFO[id];
+      const tile = info.tiles[face.tileFace] ?? info.tiles[1] ?? info.tiles[0];
+      const col = tile % ATLAS_COLS;
+      const row = Math.floor(tile / ATLAS_COLS);
+      const inset = 0.0015;
+      const u0 = col / ATLAS_COLS + inset;
+      const u1 = (col + 1) / ATLAS_COLS - inset;
+      const v0 = 1 - (row + 1) / ATLAS_ROWS + inset;
+      const v1 = 1 - row / ATLAS_ROWS - inset;
+      const uv = [[u0, v0], [u0, v1], [u1, v1], [u1, v0]];
+      const start = data.positions.length / 3;
+      const variation = 0.93 + hash3(globalX, y, globalZ, 2201) * 0.075;
+      const shade = face.shade * variation;
+
+      for (let i = 0; i < 4; i++) {
+        const corner = face.corners[i];
+        const waterTop = id === BLOCK.WATER && corner[1] === 1 ? 0.87 : corner[1];
+        data.positions.push(lx + corner[0], y + waterTop, lz + corner[2]);
+        data.normals.push(...face.dir);
+        data.colors.push(shade, shade, shade);
+        data.uvs.push(...uv[i]);
+      }
+      data.indices.push(start, start + 1, start + 2, start, start + 2, start + 3);
+    }
+
+    function geometryFromData(data) {
+      if (!data.indices.length) return null;
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute(data.positions, 3));
+      geometry.setAttribute("normal", new THREE.Int8BufferAttribute(data.normals, 3, true));
+      geometry.setAttribute("color", new THREE.Float32BufferAttribute(data.colors, 3));
+      geometry.setAttribute("uv", new THREE.Float32BufferAttribute(data.uvs, 2));
+      geometry.setIndex(data.indices);
+      geometry.computeBoundingSphere();
+      return geometry;
+    }
+
+    function clearChunkGroup(chunk) {
+      for (const child of [...chunk.group.children]) {
+        chunk.group.remove(child);
+        child.geometry?.dispose();
+      }
+    }
+
+    function buildChunkMesh(chunk) {
+      if (!chunk?.ready) return;
+      const opaque = makeMeshData();
+      const water = makeMeshData();
+      const glass = makeMeshData();
+      const originX = chunk.cx * CONFIG.chunkSize;
+      const originZ = chunk.cz * CONFIG.chunkSize;
+
+      for (let y = 0; y < CONFIG.worldHeight; y++) {
+        for (let lz = 0; lz < CONFIG.chunkSize; lz++) {
+          for (let lx = 0; lx < CONFIG.chunkSize; lx++) {
+            const id = chunk.get(lx, y, lz);
+            if (id === BLOCK.AIR || BLOCK_INFO[id].render === "none") continue;
+            const globalX = originX + lx;
+            const globalZ = originZ + lz;
+            const render = BLOCK_INFO[id].render || "opaque";
+            const data = render === "water" ? water : render === "glass" ? glass : opaque;
+            for (const face of FACE_DEFS) {
+              const neighbor = getBlock(globalX + face.dir[0], y + face.dir[1], globalZ + face.dir[2]);
+              if (faceVisible(id, neighbor)) pushFace(data, lx, y, lz, id, face, globalX, globalZ);
+            }
+          }
+        }
+      }
+
+      clearChunkGroup(chunk);
+      const opaqueGeometry = geometryFromData(opaque);
+      const waterGeometry = geometryFromData(water);
+      const glassGeometry = geometryFromData(glass);
+      if (opaqueGeometry) {
+        const mesh = new THREE.Mesh(opaqueGeometry, opaqueMaterial);
+        chunk.group.add(mesh);
+      }
+      if (waterGeometry) {
+        const mesh = new THREE.Mesh(waterGeometry, waterMaterial);
+        mesh.renderOrder = 3;
+        chunk.group.add(mesh);
+      }
+      if (glassGeometry) {
+        const mesh = new THREE.Mesh(glassGeometry, glassMaterial);
+        mesh.renderOrder = 4;
+        chunk.group.add(mesh);
+      }
+      chunk.meshRevision++;
+      if (!chunk.group.parent) scene.add(chunk.group);
+    }
+
+    function markChunkDirty(cx, cz) {
+      const key = chunkKey(cx, cz);
+      if (chunks.get(key)?.ready) dirtyChunks.add(key);
+    }
+
+    function markBlockNeighborsDirty(x, z) {
+      const cx = floorDiv(x, CONFIG.chunkSize);
+      const cz = floorDiv(z, CONFIG.chunkSize);
+      markChunkDirty(cx, cz);
+      const lx = positiveMod(x, CONFIG.chunkSize);
+      const lz = positiveMod(z, CONFIG.chunkSize);
+      if (lx === 0) markChunkDirty(cx - 1, cz);
+      if (lx === CONFIG.chunkSize - 1) markChunkDirty(cx + 1, cz);
+      if (lz === 0) markChunkDirty(cx, cz - 1);
+      if (lz === CONFIG.chunkSize - 1) markChunkDirty(cx, cz + 1);
+    }
+
+    function setBlock(x, y, z, id, record = true) {
+      x = Math.floor(x);
+      y = Math.floor(y);
+      z = Math.floor(z);
+      if (y < 1 || y >= CONFIG.worldHeight || !BLOCK_INFO[id]) return false;
+      if (record) {
+        edits.set(blockKey(x, y, z), id);
+        bucketEdit(x, y, z, id);
+        scheduleSave();
+      }
+      const cx = floorDiv(x, CONFIG.chunkSize);
+      const cz = floorDiv(z, CONFIG.chunkSize);
+      const chunk = chunks.get(chunkKey(cx, cz));
+      if (chunk?.ready) {
+        chunk.set(positiveMod(x, CONFIG.chunkSize), y, positiveMod(z, CONFIG.chunkSize), id);
+      }
+      markBlockNeighborsDirty(x, z);
+      return true;
+    }
+
+    function queueChunk(cx, cz, priority = false) {
+      const key = chunkKey(cx, cz);
+      if (chunks.has(key) || queuedChunks.has(key)) return;
+      queuedChunks.add(key);
+      if (priority) generationQueue.unshift({ cx, cz, key });
+      else generationQueue.push({ cx, cz, key });
+    }
+
+    function queueAround(worldX, worldZ) {
+      const centerX = floorDiv(worldX, CONFIG.chunkSize);
+      const centerZ = floorDiv(worldZ, CONFIG.chunkSize);
+      const candidates = [];
+      for (let dx = -state.renderDistance; dx <= state.renderDistance; dx++) {
+        for (let dz = -state.renderDistance; dz <= state.renderDistance; dz++) {
+          const distance = Math.hypot(dx, dz);
+          if (distance > state.renderDistance + 0.45) continue;
+          candidates.push({ cx: centerX + dx, cz: centerZ + dz, distance });
+        }
+      }
+      candidates.sort((a, b) => a.distance - b.distance);
+      for (const candidate of candidates) queueChunk(candidate.cx, candidate.cz);
+
+      const unloadDistance = state.renderDistance + 1.75;
+      for (const [key, chunk] of chunks) {
+        if (Math.hypot(chunk.cx - centerX, chunk.cz - centerZ) <= unloadDistance) continue;
+        scene.remove(chunk.group);
+        clearChunkGroup(chunk);
+        chunks.delete(key);
+        dirtyChunks.delete(key);
+      }
+    }
+
+    function createChunkNow(cx, cz) {
+      const key = chunkKey(cx, cz);
+      if (chunks.has(key)) return chunks.get(key);
+      queuedChunks.delete(key);
+      const chunk = new Chunk(cx, cz);
+      chunks.set(key, chunk);
+      generateChunk(chunk);
+      buildChunkMesh(chunk);
+      markChunkDirty(cx - 1, cz);
+      markChunkDirty(cx + 1, cz);
+      markChunkDirty(cx, cz - 1);
+      markChunkDirty(cx, cz + 1);
+      return chunk;
+    }
+
+    function processWorldQueues() {
+      const start = performance.now();
+      let generated = 0;
+      while (generationQueue.length && generated < 1 && performance.now() - start < 7) {
+        const next = generationQueue.shift();
+        queuedChunks.delete(next.key);
+        if (chunks.has(next.key)) continue;
+        const centerX = floorDiv(player.position.x, CONFIG.chunkSize);
+        const centerZ = floorDiv(player.position.z, CONFIG.chunkSize);
+        if (Math.hypot(next.cx - centerX, next.cz - centerZ) > state.renderDistance + 1) continue;
+        createChunkNow(next.cx, next.cz);
+        generated++;
+      }
+
+      if (dirtyChunks.size && performance.now() - start < 10) {
+        const key = dirtyChunks.values().next().value;
+        dirtyChunks.delete(key);
+        buildChunkMesh(chunks.get(key));
+      }
+    }
+
+    function findSpawn() {
+      let best = { x: 0, z: 0, score: -Infinity };
+      for (let radius = 0; radius <= 18; radius++) {
+        for (let i = 0; i < Math.max(1, radius * 6); i++) {
+          const angle = (i / Math.max(1, radius * 6)) * TAU;
+          const x = Math.round(Math.cos(angle) * radius);
+          const z = Math.round(Math.sin(angle) * radius);
+          const height = heightAt(x, z);
+          const biome = biomeAt(x, z, height);
+          const slope = Math.max(
+            Math.abs(heightAt(x + 1, z) - height),
+            Math.abs(heightAt(x, z + 1) - height)
+          );
+          let treeCanopyNearby = false;
+          for (let ox = -3; ox <= 3 && !treeCanopyNearby; ox++) {
+            for (let oz = -3; oz <= 3; oz++) {
+              if (treeAt(x + ox, z + oz)) {
+                treeCanopyNearby = true;
+                break;
+              }
+            }
+          }
+          const score = (height > CONFIG.seaLevel + 1 ? 20 : 0) - slope * 5 - Math.abs(height - 19) + (biome === "Meadow" ? 8 : 0) - (treeCanopyNearby ? 18 : 0);
+          if (score > best.score) best = { x, z, score };
+          if (score > 24 && !treeCanopyNearby) return { x, z, y: height + 1.02 };
+        }
+      }
+      return { x: best.x, z: best.z, y: heightAt(best.x, best.z) + 1.02 };
+    }
+
+    const spawn = findSpawn();
+    const savedPosition = storedSave?.position;
+    const player = {
+      position: new THREE.Vector3(
+        Number.isFinite(savedPosition?.x) ? savedPosition.x : spawn.x + 0.5,
+        Number.isFinite(savedPosition?.y) ? savedPosition.y : spawn.y,
+        Number.isFinite(savedPosition?.z) ? savedPosition.z : spawn.z + 0.5
+      ),
+      velocity: new THREE.Vector3(),
+      yaw: Number.isFinite(storedSave?.yaw) ? storedSave.yaw : 0.72,
+      pitch: Number.isFinite(storedSave?.pitch) ? storedSave.pitch : -0.08,
+      grounded: false,
+      inWater: false,
+      health: clamp(storedSave?.health ?? 10, 1, 10),
+      stamina: clamp(storedSave?.stamina ?? 100, 0, 100),
+      fallDistance: 0,
+      bob: 0,
+      stepTimer: 0,
+      spawn: new THREE.Vector3(spawn.x + 0.5, spawn.y, spawn.z + 0.5)
+    };
+
+    let initialCenterX = floorDiv(player.position.x, CONFIG.chunkSize);
+    let initialCenterZ = floorDiv(player.position.z, CONFIG.chunkSize);
+    createChunkNow(initialCenterX, initialCenterZ);
+    const savedPositionSafe = !collidesPlayerAt(player.position.x, player.position.y, player.position.z);
+    if (!savedPositionSafe || player.position.y < 1 || player.position.y > CONFIG.worldHeight + 10) {
+      player.position.copy(player.spawn);
+      initialCenterX = floorDiv(player.position.x, CONFIG.chunkSize);
+      initialCenterZ = floorDiv(player.position.z, CONFIG.chunkSize);
+      createChunkNow(initialCenterX, initialCenterZ);
+    }
+    queueAround(player.position.x, player.position.z);
+
+    function initialChunksReady() {
+      const cx = floorDiv(player.position.x, CONFIG.chunkSize);
+      const cz = floorDiv(player.position.z, CONFIG.chunkSize);
+      let ready = 0;
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          if (chunks.get(chunkKey(cx + dx, cz + dz))?.ready) ready++;
+        }
+      }
+      return ready;
+    }
+
+    const input = {
+      keys: new Set(),
+      jumpQueued: false,
+      mining: false,
+      miningKey: "",
+      miningProgress: 0,
+      mineSoundTimer: 0,
+      target: null,
+      touchMove: new THREE.Vector2(),
+      touchLookId: null,
+      touchLookLast: new THREE.Vector2(),
+      joystickId: null
+    };
+
+    function collidesPlayerAt(x, y, z) {
+      const radius = CONFIG.playerRadius;
+      const minX = Math.floor(x - radius + 0.001);
+      const maxX = Math.floor(x + radius - 0.001);
+      const minY = Math.floor(y + 0.001);
+      const maxY = Math.floor(y + CONFIG.playerHeight - 0.001);
+      const minZ = Math.floor(z - radius + 0.001);
+      const maxZ = Math.floor(z + radius - 0.001);
+      for (let bx = minX; bx <= maxX; bx++) {
+        for (let by = minY; by <= maxY; by++) {
+          for (let bz = minZ; bz <= maxZ; bz++) {
+            if (isSolid(getBlock(bx, by, bz))) return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    function blockIntersectsPlayer(x, y, z) {
+      const radius = CONFIG.playerRadius;
+      return (
+        x < player.position.x + radius &&
+        x + 1 > player.position.x - radius &&
+        y < player.position.y + CONFIG.playerHeight &&
+        y + 1 > player.position.y &&
+        z < player.position.z + radius &&
+        z + 1 > player.position.z - radius
+      );
+    }
+
+    function moveAxis(axis, amount) {
+      if (amount === 0) return false;
+      const steps = Math.max(1, Math.ceil(Math.abs(amount) / 0.085));
+      const increment = amount / steps;
+      for (let i = 0; i < steps; i++) {
+        player.position[axis] += increment;
+        if (collidesPlayerAt(player.position.x, player.position.y, player.position.z)) {
+          player.position[axis] -= increment;
+          player.velocity[axis] = 0;
+          return true;
+        }
+      }
+      return false;
+    }
+
+    function damagePlayer(amount, reason = "") {
+      if (amount <= 0 || state.mode === "dead") return;
+      player.health = Math.max(0, player.health - amount);
+      renderVitals();
+      sound.play("hurt");
+      ui.damage.classList.add("show");
+      setTimeout(() => ui.damage.classList.remove("show"), 120);
+      if (reason) toast(reason);
+      if (player.health <= 0) {
+        state.mode = "dead";
+        if (document.pointerLockElement) document.exitPointerLock();
+        ui.death.classList.add("visible");
+        ui.hud.classList.remove("visible");
+        ui.touch.classList.remove("playing");
+      }
+    }
+
+    function updatePlayer(dt) {
+      if (state.mode !== "playing") return;
+
+      player.inWater = getBlock(player.position.x, player.position.y + 0.65, player.position.z) === BLOCK.WATER;
+      let moveX = 0;
+      let moveZ = 0;
+      if (input.keys.has("KeyW")) moveZ += 1;
+      if (input.keys.has("KeyS")) moveZ -= 1;
+      if (input.keys.has("KeyA")) moveX -= 1;
+      if (input.keys.has("KeyD")) moveX += 1;
+      moveX += input.touchMove.x;
+      moveZ += -input.touchMove.y;
+      const magnitude = Math.hypot(moveX, moveZ);
+      if (magnitude > 1) {
+        moveX /= magnitude;
+        moveZ /= magnitude;
+      }
+
+      const wantsSprint = (input.keys.has("ShiftLeft") || input.keys.has("ShiftRight")) && moveZ > 0.2 && magnitude > 0.1;
+      const sprinting = wantsSprint && player.stamina > 1 && !player.inWater;
+      if (sprinting) player.stamina = Math.max(0, player.stamina - dt * 15);
+      else player.stamina = Math.min(100, player.stamina + dt * (magnitude < 0.1 ? 18 : 10));
+
+      const speed = player.inWater ? CONFIG.swimSpeed : sprinting ? CONFIG.sprintSpeed : CONFIG.walkSpeed;
+      const forwardX = -Math.sin(player.yaw);
+      const forwardZ = -Math.cos(player.yaw);
+      const rightX = Math.cos(player.yaw);
+      const rightZ = -Math.sin(player.yaw);
+      const desiredX = (forwardX * moveZ + rightX * moveX) * speed;
+      const desiredZ = (forwardZ * moveZ + rightZ * moveX) * speed;
+      const control = player.grounded ? 14 : player.inWater ? 7 : 4.2;
+      const blend = 1 - Math.exp(-control * dt);
+      player.velocity.x = lerp(player.velocity.x, desiredX, blend);
+      player.velocity.z = lerp(player.velocity.z, desiredZ, blend);
+
+      if (magnitude < 0.05) {
+        const drag = Math.exp(-(player.grounded ? 10 : 0.8) * dt);
+        player.velocity.x *= drag;
+        player.velocity.z *= drag;
+      }
+
+      if (input.jumpQueued) {
+        if (player.grounded) {
+          player.velocity.y = CONFIG.jumpSpeed;
+          player.grounded = false;
+          player.fallDistance = 0;
+          sound.play("jump");
+        } else if (player.inWater) {
+          player.velocity.y = 4.2;
+        }
+        input.jumpQueued = false;
+      }
+
+      if (player.inWater) {
+        player.velocity.y -= CONFIG.gravity * 0.18 * dt;
+        player.velocity.y *= Math.exp(-1.8 * dt);
+        if (input.keys.has("Space")) player.velocity.y = lerp(player.velocity.y, 3.7, 1 - Math.exp(-7 * dt));
+      } else {
+        player.velocity.y = Math.max(-32, player.velocity.y - CONFIG.gravity * dt);
+      }
+
+      const before = player.position.clone();
+      moveAxis("x", player.velocity.x * dt);
+      moveAxis("z", player.velocity.z * dt);
+      const descending = player.velocity.y < 0;
+      const hitY = moveAxis("y", player.velocity.y * dt);
+      const wasGrounded = player.grounded;
+      player.grounded = hitY && descending;
+      if (!player.grounded && player.velocity.y <= 0) {
+        player.position.y -= 0.045;
+        player.grounded = collidesPlayerAt(player.position.x, player.position.y, player.position.z);
+        player.position.y += 0.045;
+      }
+
+      if (!player.grounded && player.velocity.y < 0) {
+        player.fallDistance += -player.velocity.y * dt;
+      } else if (player.grounded && !wasGrounded) {
+        if (player.fallDistance > 4.1) {
+          const damage = Math.min(8, Math.floor((player.fallDistance - 3.3) * 1.15));
+          damagePlayer(damage, damage > 2 ? "That landing hurt." : "");
+        } else if (player.fallDistance > 1.2) {
+          sound.play("land");
+        }
+        player.fallDistance = 0;
+      }
+
+      if (player.position.y < -8) damagePlayer(20, "You fell beyond the world.");
+
+      const moved = Math.hypot(player.position.x - before.x, player.position.z - before.z);
+      state.stats.distance += moved;
+      const planarSpeed = Math.hypot(player.velocity.x, player.velocity.z);
+      if (player.grounded && planarSpeed > 0.6) {
+        player.bob += dt * planarSpeed * 2.1;
+        player.stepTimer -= dt;
+        if (player.stepTimer <= 0) {
+          sound.play("step", getBlock(player.position.x, player.position.y - 0.08, player.position.z));
+          player.stepTimer = sprinting ? 0.29 : 0.39;
+        }
+      } else {
+        player.stepTimer = 0;
+      }
+
+      const targetFov = sprinting ? 77.5 : player.inWater ? 69 : 72;
+      camera.fov = lerp(camera.fov, targetFov, 1 - Math.exp(-7 * dt));
+      camera.updateProjectionMatrix();
+
+      const bobAmount = player.grounded ? Math.min(1, planarSpeed / CONFIG.walkSpeed) : 0;
+      const bobX = Math.sin(player.bob) * 0.025 * bobAmount;
+      const bobY = Math.abs(Math.cos(player.bob)) * 0.035 * bobAmount;
+      camera.position.set(player.position.x + bobX, player.position.y + CONFIG.eyeHeight - bobY, player.position.z);
+      camera.rotation.x = player.pitch;
+      camera.rotation.y = player.yaw;
+
+      const handSwing = input.mining ? Math.sin(performance.now() * 0.018) * 13 : 0;
+      const handBobX = Math.sin(player.bob) * 7 * bobAmount;
+      const handBobY = Math.abs(Math.cos(player.bob)) * 8 * bobAmount;
+      ui.hand.style.transform = `translate(${handBobX}px, ${handBobY + handSwing}px) rotate(${-22 + handSwing * 0.6}deg)`;
+
+      ui.stamina.style.setProperty("--value", `${player.stamina}%`);
+      ui.staminaCopy.textContent = String(Math.round(player.stamina));
+    }
+
+    const selectionOutline = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.BoxGeometry(1.012, 1.012, 1.012)),
+      new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.92, depthTest: false })
+    );
+    selectionOutline.visible = false;
+    selectionOutline.renderOrder = 20;
+    scene.add(selectionOutline);
+
+    function voxelRaycast(origin, direction, maxDistance = CONFIG.reach) {
+      let x = Math.floor(origin.x);
+      let y = Math.floor(origin.y);
+      let z = Math.floor(origin.z);
+      const stepX = direction.x >= 0 ? 1 : -1;
+      const stepY = direction.y >= 0 ? 1 : -1;
+      const stepZ = direction.z >= 0 ? 1 : -1;
+      const tDeltaX = direction.x === 0 ? Infinity : Math.abs(1 / direction.x);
+      const tDeltaY = direction.y === 0 ? Infinity : Math.abs(1 / direction.y);
+      const tDeltaZ = direction.z === 0 ? Infinity : Math.abs(1 / direction.z);
+      let tMaxX = direction.x === 0 ? Infinity : ((stepX > 0 ? x + 1 - origin.x : origin.x - x) * tDeltaX);
+      let tMaxY = direction.y === 0 ? Infinity : ((stepY > 0 ? y + 1 - origin.y : origin.y - y) * tDeltaY);
+      let tMaxZ = direction.z === 0 ? Infinity : ((stepZ > 0 ? z + 1 - origin.z : origin.z - z) * tDeltaZ);
+      let distance = 0;
+      let normal = { x: 0, y: 0, z: 0 };
+
+      for (let iterations = 0; iterations < 128 && distance <= maxDistance; iterations++) {
+        const id = getBlock(x, y, z);
+        if (isSolid(id)) {
+          return { x, y, z, id, distance, normal };
+        }
+        if (tMaxX < tMaxY && tMaxX < tMaxZ) {
+          x += stepX;
+          distance = tMaxX;
+          tMaxX += tDeltaX;
+          normal = { x: -stepX, y: 0, z: 0 };
+        } else if (tMaxY < tMaxZ) {
+          y += stepY;
+          distance = tMaxY;
+          tMaxY += tDeltaY;
+          normal = { x: 0, y: -stepY, z: 0 };
+        } else {
+          z += stepZ;
+          distance = tMaxZ;
+          tMaxZ += tDeltaZ;
+          normal = { x: 0, y: 0, z: -stepZ };
+        }
+      }
+      return null;
+    }
+
+    function updateTarget() {
+      const direction = new THREE.Vector3();
+      camera.getWorldDirection(direction);
+      const target = voxelRaycast(camera.position, direction);
+      input.target = target;
+      if (!target) {
+        selectionOutline.visible = false;
+        ui.targetCard.classList.remove("visible");
+        if (input.miningKey) resetMining();
+        return;
+      }
+      selectionOutline.visible = true;
+      selectionOutline.position.set(target.x + 0.5, target.y + 0.5, target.z + 0.5);
+      ui.targetCard.textContent = BLOCK_INFO[target.id].name;
+      ui.targetCard.classList.add("visible");
+    }
+
+    const dropGeometry = new THREE.BoxGeometry(0.28, 0.28, 0.28);
+    const drops = [];
+    const particles = [];
+    const particleGeometry = new THREE.BoxGeometry(0.085, 0.085, 0.085);
+
+    function spawnDrop(id, x, y, z, velocity = null) {
+      if (!PLACEABLE_BLOCKS.includes(id)) return null;
+      if (drops.length >= CONFIG.maxDrops) collectDrop(drops[0], true);
+      const material = new THREE.MeshLambertMaterial({ color: BLOCK_INFO[id].color });
+      const mesh = new THREE.Mesh(dropGeometry, material);
+      mesh.position.set(x, y, z);
+      mesh.rotation.set(hash2(drops.length, id, 2801) * 2, hash2(id, drops.length, 2811) * 2, 0);
+      scene.add(mesh);
+      const drop = {
+        id,
+        mesh,
+        velocity: velocity || new THREE.Vector3((Math.random() - 0.5) * 2.2, 3.2 + Math.random() * 1.8, (Math.random() - 0.5) * 2.2),
+        age: 0,
+        grounded: false
+      };
+      drops.push(drop);
+      return drop;
+    }
+
+    function removeDrop(drop) {
+      const index = drops.indexOf(drop);
+      if (index >= 0) drops.splice(index, 1);
+      scene.remove(drop.mesh);
+      drop.mesh.material.dispose();
+    }
+
+    function collectDrop(drop, silent = false) {
+      addInventory(drop.id, 1);
+      if (!silent) {
+        sound.play("pickup");
+        showSelectedName(`+1 ${BLOCK_INFO[drop.id].name}`);
+      }
+      removeDrop(drop);
+    }
+
+    function spawnParticles(id, x, y, z, count = 11, gentle = false) {
+      const color = BLOCK_INFO[id]?.color ?? 0xffffff;
+      for (let i = 0; i < count; i++) {
+        const material = new THREE.MeshBasicMaterial({ color });
+        const mesh = new THREE.Mesh(particleGeometry, material);
+        mesh.position.set(x + (Math.random() - 0.5) * 0.7, y + (Math.random() - 0.5) * 0.7, z + (Math.random() - 0.5) * 0.7);
+        mesh.rotation.set(Math.random() * 3, Math.random() * 3, 0);
+        scene.add(mesh);
+        particles.push({
+          mesh,
+          velocity: new THREE.Vector3((Math.random() - 0.5) * (gentle ? 1.2 : 3.2), Math.random() * (gentle ? 1.7 : 3.8), (Math.random() - 0.5) * (gentle ? 1.2 : 3.2)),
+          life: 0.45 + Math.random() * 0.45,
+          age: 0
+        });
+      }
+    }
+
+    function updateDrops(dt) {
+      for (const drop of [...drops]) {
+        drop.age += dt;
+        const distance = drop.mesh.position.distanceTo(camera.position);
+        if (drop.age > 0.35 && distance < 2.7 && state.mode === "playing") {
+          const target = new THREE.Vector3(player.position.x, player.position.y + 0.85, player.position.z);
+          const direction = target.sub(drop.mesh.position);
+          const length = Math.max(0.001, direction.length());
+          direction.multiplyScalar(1 / length);
+          drop.velocity.addScaledVector(direction, dt * (9 + (2.7 - distance) * 7));
+          drop.velocity.multiplyScalar(Math.exp(-1.8 * dt));
+          if (distance < 0.72) {
+            collectDrop(drop);
+            continue;
+          }
+        } else {
+          drop.velocity.y -= 13 * dt;
+          drop.velocity.x *= Math.exp(-0.55 * dt);
+          drop.velocity.z *= Math.exp(-0.55 * dt);
+        }
+
+        drop.mesh.position.addScaledVector(drop.velocity, dt);
+        const belowY = drop.mesh.position.y - 0.16;
+        if (drop.velocity.y < 0 && isSolid(getBlock(drop.mesh.position.x, belowY, drop.mesh.position.z))) {
+          drop.mesh.position.y = Math.floor(belowY) + 1.17;
+          drop.velocity.y *= -0.26;
+          drop.velocity.x *= 0.74;
+          drop.velocity.z *= 0.74;
+          drop.grounded = true;
+        }
+        drop.mesh.rotation.y += dt * 2.4;
+        drop.mesh.rotation.x += dt * 0.7;
+        if (drop.age > 120 || drop.mesh.position.y < -10) removeDrop(drop);
+      }
+
+      for (const particle of [...particles]) {
+        particle.age += dt;
+        particle.velocity.y -= 8.5 * dt;
+        particle.mesh.position.addScaledVector(particle.velocity, dt);
+        particle.mesh.rotation.x += dt * 4;
+        particle.mesh.rotation.y += dt * 3;
+        particle.mesh.scale.setScalar(Math.max(0.05, 1 - particle.age / particle.life));
+        if (particle.age >= particle.life) {
+          particles.splice(particles.indexOf(particle), 1);
+          scene.remove(particle.mesh);
+          particle.mesh.material.dispose();
+        }
+      }
+    }
+
+    function resetMining() {
+      input.miningKey = "";
+      input.miningProgress = 0;
+      input.mineSoundTimer = 0;
+      ui.mineRing.classList.remove("active");
+      ui.mineRing.style.setProperty("--mine", 0);
+    }
+
+    function breakBlock(target, spawnPhysicalDrop = true) {
+      const id = getBlock(target.x, target.y, target.z);
+      const info = BLOCK_INFO[id];
+      if (!info || !Number.isFinite(info.hardness)) {
+        toast("Bedrock cannot be mined.");
+        sound.play("deny");
+        return false;
+      }
+      setBlock(target.x, target.y, target.z, BLOCK.AIR);
+      if (spawnPhysicalDrop) {
+        spawnDrop(info.drop ?? id, target.x + 0.5, target.y + 0.55, target.z + 0.5);
+      }
+      spawnParticles(id, target.x + 0.5, target.y + 0.5, target.z + 0.5);
+      sound.play("break", id);
+      state.stats.mined++;
+      return true;
+    }
+
+    function updateMining(dt) {
+      if (!input.mining || state.mode !== "playing" || !input.target) {
+        if (input.miningKey) resetMining();
+        return;
+      }
+      const target = input.target;
+      const key = blockKey(target.x, target.y, target.z);
+      const info = BLOCK_INFO[target.id];
+      if (!Number.isFinite(info.hardness)) {
+        if (input.miningKey !== key) {
+          input.miningKey = key;
+          toast("Bedrock cannot be mined.");
+          sound.play("deny");
+        }
+        return;
+      }
+      if (input.miningKey !== key) {
+        input.miningKey = key;
+        input.miningProgress = 0;
+        input.mineSoundTimer = 0;
+      }
+      input.miningProgress += dt / info.hardness;
+      input.mineSoundTimer -= dt;
+      if (input.mineSoundTimer <= 0) {
+        sound.play("mine", target.id);
+        input.mineSoundTimer = 0.22;
+      }
+      ui.mineRing.classList.add("active");
+      ui.mineRing.style.setProperty("--mine", clamp(input.miningProgress, 0, 1));
+      if (input.miningProgress >= 1) {
+        breakBlock(target);
+        resetMining();
+        updateTarget();
+      }
+    }
+
+    function placeSelectedBlock() {
+      if (state.mode !== "playing" || !input.target) return false;
+      const id = state.hotbar[state.selectedSlot];
+      if ((state.inventory[id] || 0) <= 0) {
+        toast(`No ${BLOCK_INFO[id].name.toLowerCase()} left. Mine some first.`);
+        sound.play("deny");
+        return false;
+      }
+      const { normal } = input.target;
+      const x = input.target.x + normal.x;
+      const y = input.target.y + normal.y;
+      const z = input.target.z + normal.z;
+      if (!isReplaceable(getBlock(x, y, z))) return false;
+      if (blockIntersectsPlayer(x, y, z)) {
+        toast("You cannot place a block inside yourself.");
+        sound.play("deny");
+        return false;
+      }
+      setBlock(x, y, z, id);
+      state.inventory[id]--;
+      state.stats.placed++;
+      renderInventory();
+      spawnParticles(id, x + 0.5, y + 0.5, z + 0.5, 6, true);
+      sound.play("place", id);
+      return true;
+    }
+
+    class SoundEngine {
+      constructor() {
+        this.context = null;
+        this.master = null;
+      }
+
+      ensure() {
+        if (!state.sound) return;
+        if (!this.context) {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          if (!AudioContext) return;
+          this.context = new AudioContext();
+          this.master = this.context.createGain();
+          this.master.gain.value = 0.17;
+          this.master.connect(this.context.destination);
+        }
+        if (this.context.state === "suspended") this.context.resume();
+      }
+
+      tone(frequency, duration, type = "square", gain = 0.05, slide = 1) {
+        if (!state.sound) return;
+        this.ensure();
+        if (!this.context || !this.master) return;
+        const now = this.context.currentTime;
+        const oscillator = this.context.createOscillator();
+        const envelope = this.context.createGain();
+        oscillator.type = type;
+        oscillator.frequency.setValueAtTime(frequency, now);
+        oscillator.frequency.exponentialRampToValueAtTime(Math.max(20, frequency * slide), now + duration);
+        envelope.gain.setValueAtTime(gain, now);
+        envelope.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+        oscillator.connect(envelope).connect(this.master);
+        oscillator.start(now);
+        oscillator.stop(now + duration);
+      }
+
+      noise(duration = 0.08, gain = 0.035, lowpass = 900) {
+        if (!state.sound) return;
+        this.ensure();
+        if (!this.context || !this.master) return;
+        const length = Math.ceil(this.context.sampleRate * duration);
+        const buffer = this.context.createBuffer(1, length, this.context.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / length);
+        const source = this.context.createBufferSource();
+        const filter = this.context.createBiquadFilter();
+        const envelope = this.context.createGain();
+        filter.type = "lowpass";
+        filter.frequency.value = lowpass;
+        envelope.gain.value = gain;
+        source.buffer = buffer;
+        source.connect(filter).connect(envelope).connect(this.master);
+        source.start();
+      }
+
+      play(type, blockId = BLOCK.GRASS) {
+        if (!state.sound) return;
+        const hard = [BLOCK.STONE, BLOCK.COBBLE, BLOCK.BRICKS, BLOCK.COAL_ORE, BLOCK.IRON_ORE, BLOCK.BEDROCK].includes(blockId);
+        const woody = [BLOCK.LOG, BLOCK.PLANKS].includes(blockId);
+        if (type === "step") {
+          this.noise(0.055, 0.018, hard ? 650 : woody ? 480 : 330);
+        } else if (type === "mine") {
+          this.noise(0.07, 0.027, hard ? 1100 : woody ? 620 : 420);
+        } else if (type === "break") {
+          this.noise(0.13, 0.06, hard ? 1350 : 650);
+          this.tone(hard ? 120 : 170, 0.09, "square", 0.025, 0.65);
+        } else if (type === "place") {
+          this.noise(0.07, 0.04, 520);
+          this.tone(160, 0.055, "square", 0.018, 0.82);
+        } else if (type === "pickup") {
+          this.tone(580, 0.08, "square", 0.035, 1.65);
+        } else if (type === "jump") {
+          this.tone(110, 0.07, "sine", 0.025, 1.35);
+        } else if (type === "land") {
+          this.noise(0.08, 0.025, 260);
+        } else if (type === "hurt") {
+          this.tone(145, 0.18, "sawtooth", 0.045, 0.55);
+        } else if (type === "deny") {
+          this.tone(95, 0.1, "square", 0.025, 0.72);
+        } else if (type === "select") {
+          this.tone(310, 0.045, "square", 0.018, 1.14);
+        }
+      }
+    }
+
+    const sound = new SoundEngine();
+
+    function toast(message) {
+      const element = document.createElement("div");
+      element.className = "toast";
+      element.textContent = message;
+      $("#toast-stack").appendChild(element);
+      setTimeout(() => element.remove(), 3050);
+    }
+
+    let selectedNameTimer = 0;
+    function showSelectedName(customText = "") {
+      const id = state.hotbar[state.selectedSlot];
+      ui.selectedName.textContent = customText || `${BLOCK_INFO[id].name} · ${state.inventory[id] || 0}`;
+      ui.selectedName.classList.add("show");
+      clearTimeout(selectedNameTimer);
+      selectedNameTimer = setTimeout(() => ui.selectedName.classList.remove("show"), 1300);
+    }
+
+    function addInventory(id, amount) {
+      if (!BLOCK_INFO[id] || amount <= 0) return;
+      state.inventory[id] = (state.inventory[id] || 0) + amount;
+      renderInventory();
+      scheduleSave();
+    }
+
+    function selectSlot(index, announce = true) {
+      state.selectedSlot = positiveMod(index, 9);
+      renderHotbar();
+      renderInventoryGrid();
+      if (announce) {
+        showSelectedName();
+        sound.play("select");
+      }
+      scheduleSave();
+    }
+
+    function renderHotbar() {
+      ui.hotbar.replaceChildren();
+      state.hotbar.forEach((id, index) => {
+        const slot = document.createElement("button");
+        slot.type = "button";
+        slot.className = `slot${index === state.selectedSlot ? " selected" : ""}`;
+        slot.title = `${index + 1}: ${BLOCK_INFO[id].name}`;
+        slot.innerHTML = `<span class="slot-key">${index + 1}</span><span class="block-icon"></span><span class="slot-count">${state.inventory[id] || ""}</span>`;
+        applyIcon(slot.querySelector(".block-icon"), id);
+        slot.addEventListener("click", (event) => {
+          event.stopPropagation();
+          selectSlot(index);
+        });
+        ui.hotbar.appendChild(slot);
+      });
+      ui.selectedSlotCopy.textContent = String(state.selectedSlot + 1);
+    }
+
+    function renderInventoryGrid() {
+      ui.inventoryGrid.replaceChildren();
+      for (const id of PLACEABLE_BLOCKS) {
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = `inventory-item${state.hotbar[state.selectedSlot] === id ? " active" : ""}`;
+        item.innerHTML = `
+          <span class="inventory-item-count">${state.inventory[id] || 0}</span>
+          <span class="block-icon"></span>
+          <span class="inventory-item-name">${BLOCK_INFO[id].name}</span>
+        `;
+        applyIcon(item.querySelector(".block-icon"), id);
+        item.addEventListener("click", () => {
+          state.hotbar[state.selectedSlot] = id;
+          renderInventory();
+          showSelectedName();
+          sound.play("select");
+          scheduleSave();
+        });
+        ui.inventoryGrid.appendChild(item);
+      }
+    }
+
+    function renderInventory() {
+      renderHotbar();
+      if (ui.inventory.classList.contains("visible")) renderInventoryGrid();
+    }
+
+    function renderVitals() {
+      ui.hearts.replaceChildren();
+      for (let i = 0; i < 5; i++) {
+        const heart = document.createElement("div");
+        const fill = clamp((player.health - i * 2) / 2, 0, 1) * 100;
+        heart.className = "heart";
+        heart.innerHTML = `<span style="--fill:${fill}%"></span>`;
+        ui.hearts.appendChild(heart);
+      }
+    }
+
+    function openInventory() {
+      if (!state.worldReady || state.mode === "dead") return;
+      state.mode = "inventory";
+      if (document.pointerLockElement) document.exitPointerLock();
+      ui.pause.classList.remove("visible");
+      ui.inventory.classList.add("visible");
+      renderInventoryGrid();
+      ui.touch.classList.remove("playing");
+    }
+
+    function closeInventory(resume = true) {
+      ui.inventory.classList.remove("visible");
+      if (!resume) {
+        state.mode = "paused";
+        ui.pause.classList.add("visible");
+        return;
+      }
+      requestPlay();
+    }
+
+    const coarsePointer = matchMedia("(pointer: coarse)").matches;
+
+    function setPlaying() {
+      state.hasEntered = true;
+      state.mode = "playing";
+      ui.start.classList.remove("visible");
+      ui.pause.classList.remove("visible");
+      ui.inventory.classList.remove("visible");
+      ui.death.classList.remove("visible");
+      ui.hud.classList.add("visible");
+      ui.hud.setAttribute("aria-hidden", "false");
+      if (coarsePointer) ui.touch.classList.add("playing");
+      sound.ensure();
+    }
+
+    function handlePointerLockFailure() {
+      state.mode = "paused";
+      if (state.hasEntered) {
+        ui.pause.classList.add("visible");
+        toast("Mouse capture was blocked. Press Resume to retry.");
+      } else {
+        ui.pause.classList.remove("visible");
+        toast("Mouse capture was blocked. Click Enter world to retry.");
+      }
+    }
+
+    function requestPlay() {
+      if (!state.worldReady || state.mode === "dead") return;
+      sound.ensure();
+      if (coarsePointer || !renderer.domElement.requestPointerLock) {
+        setPlaying();
+        return;
+      }
+      try {
+        const pointerLockRequest = renderer.domElement.requestPointerLock();
+        if (pointerLockRequest && typeof pointerLockRequest.catch === "function") {
+          pointerLockRequest.catch(handlePointerLockFailure);
+        }
+      } catch {
+        handlePointerLockFailure();
+      }
+    }
+
+    function pauseGame() {
+      if (!state.hasEntered || state.mode === "dead" || state.mode === "inventory") return;
+      state.mode = "paused";
+      input.keys.clear();
+      input.mining = false;
+      resetMining();
+      ui.pause.classList.add("visible");
+      ui.touch.classList.remove("playing");
+      saveGame(false);
+    }
+
+    document.addEventListener("pointerlockchange", () => {
+      if (coarsePointer) return;
+      if (document.pointerLockElement === renderer.domElement) {
+        setPlaying();
+      } else if (state.hasEntered && state.mode === "playing") {
+        pauseGame();
+      }
+    });
+
+    document.addEventListener("pointerlockerror", () => {
+      handlePointerLockFailure();
+    });
+
+    ui.startButton.addEventListener("click", requestPlay);
+    ui.resumeButton.addEventListener("click", requestPlay);
+    ui.inventoryButton.addEventListener("click", openInventory);
+    ui.inventoryClose.addEventListener("click", () => closeInventory(true));
+    $("#save-button").addEventListener("click", () => {
+      saveGame(true);
+      toast("World saved.");
+    });
+    $("#new-world-button").addEventListener("click", () => {
+      if (!confirm("Create a new world? This removes the current local save.")) return;
+      localStorage.removeItem(SAVE_KEY);
+      location.reload();
+    });
+    ui.respawnButton.addEventListener("click", () => {
+      player.health = 10;
+      player.stamina = 100;
+      player.velocity.set(0, 0, 0);
+      player.position.copy(player.spawn);
+      player.fallDistance = 0;
+      renderVitals();
+      ui.death.classList.remove("visible");
+      queueAround(player.position.x, player.position.z);
+      requestPlay();
+    });
+
+    ui.renderDistance.addEventListener("change", () => {
+      state.renderDistance = clamp(Number(ui.renderDistance.value) || 3, 2, 4);
+      const far = state.renderDistance * CONFIG.chunkSize + 36;
+      scene.fog.near = Math.max(34, far * 0.52);
+      scene.fog.far = far;
+      queueAround(player.position.x, player.position.z);
+      scheduleSave();
+    });
+
+    ui.soundToggle.addEventListener("change", () => {
+      state.sound = ui.soundToggle.value === "on";
+      if (state.sound) sound.ensure();
+      scheduleSave();
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (["Space", "ArrowUp", "ArrowDown"].includes(event.code)) event.preventDefault();
+      if (event.code === "KeyE" && !event.repeat && state.hasEntered && state.mode !== "dead") {
+        if (state.mode === "inventory") closeInventory(true);
+        else openInventory();
+        return;
+      }
+      if (event.code === "Escape" && state.mode === "inventory") {
+        closeInventory(false);
+        return;
+      }
+      if (/^Digit[1-9]$/.test(event.code) && !event.repeat) {
+        selectSlot(Number(event.code.slice(5)) - 1);
+      }
+      if (event.code === "Space" && !event.repeat) input.jumpQueued = true;
+      input.keys.add(event.code);
+    });
+
+    document.addEventListener("keyup", (event) => {
+      input.keys.delete(event.code);
+    });
+
+    document.addEventListener("mousemove", (event) => {
+      if (state.mode !== "playing" || document.pointerLockElement !== renderer.domElement) return;
+      const sensitivity = 0.00215;
+      player.yaw -= event.movementX * sensitivity;
+      player.pitch = clamp(player.pitch - event.movementY * sensitivity, -Math.PI / 2 + 0.025, Math.PI / 2 - 0.025);
+    });
+
+    renderer.domElement.addEventListener("mousedown", (event) => {
+      if (state.mode !== "playing") {
+        if (state.worldReady && state.hasEntered) requestPlay();
+        return;
+      }
+      if (event.button === 0) {
+        input.mining = true;
+      } else if (event.button === 2) {
+        placeSelectedBlock();
+      }
+    });
+
+    document.addEventListener("mouseup", (event) => {
+      if (event.button === 0) {
+        input.mining = false;
+        resetMining();
+      }
+    });
+
+    renderer.domElement.addEventListener("contextmenu", (event) => event.preventDefault());
+    renderer.domElement.addEventListener("wheel", (event) => {
+      if (state.mode !== "playing") return;
+      event.preventDefault();
+      selectSlot(state.selectedSlot + (event.deltaY > 0 ? 1 : -1));
+    }, { passive: false });
+
+    const joystick = $("#touch-joystick");
+    const touchStick = $("#touch-stick");
+
+    function updateJoystick(event) {
+      const rect = joystick.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      let dx = event.clientX - centerX;
+      let dy = event.clientY - centerY;
+      const max = rect.width * 0.32;
+      const length = Math.hypot(dx, dy);
+      if (length > max) {
+        dx = dx / length * max;
+        dy = dy / length * max;
+      }
+      touchStick.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+      input.touchMove.set(dx / max, dy / max);
+    }
+
+    joystick.addEventListener("pointerdown", (event) => {
+      input.joystickId = event.pointerId;
+      joystick.setPointerCapture(event.pointerId);
+      updateJoystick(event);
+    });
+    joystick.addEventListener("pointermove", (event) => {
+      if (event.pointerId === input.joystickId) updateJoystick(event);
+    });
+    const releaseJoystick = (event) => {
+      if (event.pointerId !== input.joystickId) return;
+      input.joystickId = null;
+      input.touchMove.set(0, 0);
+      touchStick.style.transform = "translate(-50%, -50%)";
+    };
+    joystick.addEventListener("pointerup", releaseJoystick);
+    joystick.addEventListener("pointercancel", releaseJoystick);
+
+    renderer.domElement.addEventListener("pointerdown", (event) => {
+      if (!coarsePointer || state.mode !== "playing" || event.clientX < innerWidth * 0.36) return;
+      input.touchLookId = event.pointerId;
+      input.touchLookLast.set(event.clientX, event.clientY);
+      renderer.domElement.setPointerCapture(event.pointerId);
+    });
+    renderer.domElement.addEventListener("pointermove", (event) => {
+      if (event.pointerId !== input.touchLookId) return;
+      const dx = event.clientX - input.touchLookLast.x;
+      const dy = event.clientY - input.touchLookLast.y;
+      input.touchLookLast.set(event.clientX, event.clientY);
+      player.yaw -= dx * 0.006;
+      player.pitch = clamp(player.pitch - dy * 0.006, -Math.PI / 2 + 0.04, Math.PI / 2 - 0.04);
+    });
+    const releaseTouchLook = (event) => {
+      if (event.pointerId === input.touchLookId) input.touchLookId = null;
+    };
+    renderer.domElement.addEventListener("pointerup", releaseTouchLook);
+    renderer.domElement.addEventListener("pointercancel", releaseTouchLook);
+
+    $("#touch-jump").addEventListener("pointerdown", () => { input.jumpQueued = true; });
+    $("#touch-mine").addEventListener("pointerdown", () => { input.mining = true; });
+    $("#touch-mine").addEventListener("pointerup", () => { input.mining = false; resetMining(); });
+    $("#touch-mine").addEventListener("pointercancel", () => { input.mining = false; resetMining(); });
+    $("#touch-place").addEventListener("pointerdown", placeSelectedBlock);
+    $("#touch-bag").addEventListener("pointerdown", openInventory);
+    $("#touch-menu").addEventListener("pointerdown", () => {
+      state.mode = "paused";
+      ui.pause.classList.add("visible");
+      ui.touch.classList.remove("playing");
+      saveGame(false);
+    });
+
+    function scheduleSave() {
+      state.savePending = true;
+    }
+
+    function saveGame(showError = false) {
+      const payload = {
+        version: 4,
+        seed,
+        position: { x: player.position.x, y: player.position.y, z: player.position.z },
+        yaw: player.yaw,
+        pitch: player.pitch,
+        health: player.health,
+        stamina: player.stamina,
+        worldTime: state.worldTime,
+        day: state.day,
+        selectedSlot: state.selectedSlot,
+        hotbar: state.hotbar,
+        inventory: state.inventory,
+        renderDistance: state.renderDistance,
+        sound: state.sound,
+        stats: state.stats,
+        edits: [...edits.entries()].map(([key, id]) => {
+          const [x, y, z] = key.split(",").map(Number);
+          return [x, y, z, id];
+        })
+      };
+      try {
+        localStorage.setItem(SAVE_KEY, JSON.stringify(payload));
+        state.savePending = false;
+        state.lastSave = performance.now();
+        return true;
+      } catch (error) {
+        if (showError) toast("Save failed. Browser storage may be full.");
+        console.warn("Blockbound save failed", error);
+        return false;
+      }
+    }
+
+    addEventListener("pagehide", () => saveGame(false));
+    addEventListener("visibilitychange", () => {
+      if (document.hidden) saveGame(false);
+    });
+
+    function timeLabel(time) {
+      const hour = Math.floor(((time + 0.25) % 1) * 24);
+      if (hour < 5) return "Night";
+      if (hour < 8) return "Dawn";
+      if (hour < 12) return "Morning";
+      if (hour < 17) return "Afternoon";
+      if (hour < 20) return "Evening";
+      return "Night";
+    }
+
+    const dayTop = new THREE.Color(0x4b8fc7);
+    const dayBottom = new THREE.Color(0xc9ddd4);
+    const duskTop = new THREE.Color(0x4d557e);
+    const duskBottom = new THREE.Color(0xe9a16d);
+    const nightTop = new THREE.Color(0x071326);
+    const nightBottom = new THREE.Color(0x26364b);
+    const tempTop = new THREE.Color();
+    const tempBottom = new THREE.Color();
+    const fogColor = new THREE.Color();
+
+    function updateDayNight(dt) {
+      if (state.mode === "playing") {
+        const previous = state.worldTime;
+        state.worldTime = (state.worldTime + dt / CONFIG.dayLength) % 1;
+        if (state.worldTime < previous) state.day++;
+      }
+      const angle = state.worldTime * TAU;
+      const sunHeight = Math.sin(angle);
+      const daylight = smoothstep(clamp((sunHeight + 0.16) / 0.56, 0, 1));
+      const dusk = 1 - smoothstep(clamp(Math.abs(sunHeight) / 0.42, 0, 1));
+      tempTop.copy(nightTop).lerp(dayTop, daylight).lerp(duskTop, dusk * (1 - daylight * 0.55));
+      tempBottom.copy(nightBottom).lerp(dayBottom, daylight).lerp(duskBottom, dusk * 0.72);
+      skyUniforms.topColor.value.copy(tempTop);
+      skyUniforms.bottomColor.value.copy(tempBottom);
+      fogColor.copy(tempBottom).lerp(tempTop, 0.22);
+      scene.fog.color.copy(fogColor);
+      renderer.setClearColor(fogColor);
+
+      const radius = 185;
+      const sunX = Math.cos(angle) * radius;
+      const sunY = Math.sin(angle) * radius;
+      sunMesh.position.set(camera.position.x + sunX, camera.position.y + sunY, camera.position.z + 45);
+      moonMesh.position.set(camera.position.x - sunX, camera.position.y - sunY, camera.position.z - 45);
+      sunMesh.visible = sunHeight > -0.18;
+      moonMesh.visible = sunHeight < 0.2;
+      sky.position.copy(camera.position);
+      stars.position.copy(camera.position);
+      sunLight.position.set(player.position.x + Math.cos(angle) * 60, 35 + sunHeight * 55, player.position.z + Math.sin(angle * 0.73) * 38);
+      sunLight.intensity = lerp(0.08, 2.2, daylight);
+      hemiLight.intensity = lerp(0.22, 1.35, daylight);
+      hemiLight.color.set(daylight > 0.45 ? 0xbde2ff : 0x7790b5);
+      starMaterial.opacity = clamp(1 - daylight * 1.45, 0, 0.86);
+      cloudMaterial.opacity = lerp(0.16, 0.49, daylight);
+      ui.day.textContent = `Day ${state.day} · ${timeLabel(state.worldTime)}`;
+    }
+
+    function updateClouds(dt) {
+      for (const cloud of clouds.children) {
+        cloud.position.x += cloud.userData.speed * dt;
+        if (cloud.position.x > player.position.x + 105) cloud.position.x -= 210;
+        if (cloud.position.x < player.position.x - 105) cloud.position.x += 210;
+        if (cloud.position.z > player.position.z + 105) cloud.position.z -= 210;
+        if (cloud.position.z < player.position.z - 105) cloud.position.z += 210;
+      }
+    }
+
+    let uiTimer = 0;
+    let streamTimer = 0;
+    let fpsTimer = 0;
+    let fpsFrames = 0;
+    let displayedFps = 0;
+
+    function updateStatus(dt) {
+      uiTimer -= dt;
+      streamTimer -= dt;
+      fpsTimer += dt;
+      fpsFrames++;
+      if (fpsTimer >= 0.5) {
+        displayedFps = Math.round(fpsFrames / fpsTimer);
+        fpsFrames = 0;
+        fpsTimer = 0;
+      }
+      if (streamTimer <= 0) {
+        queueAround(player.position.x, player.position.z);
+        streamTimer = 0.7;
+      }
+      if (uiTimer > 0) return;
+      uiTimer = 0.16;
+      const x = Math.floor(player.position.x);
+      const y = Math.floor(player.position.y);
+      const z = Math.floor(player.position.z);
+      const cx = floorDiv(x, CONFIG.chunkSize);
+      const cz = floorDiv(z, CONFIG.chunkSize);
+      ui.coords.textContent = `XYZ ${x} / ${y} / ${z}`;
+      ui.chunk.textContent = `CHUNK ${cx} / ${cz} · ${displayedFps} FPS`;
+      ui.biome.textContent = biomeAt(x, z);
+      ui.weather.textContent = player.inWater ? "Swimming" : "Clear";
+    }
+
+    function updateLoading() {
+      if (state.worldReady) return;
+      const ready = initialChunksReady();
+      const progress = clamp(ready / 9, 0, 1);
+      ui.loadingBar.style.width = `${Math.max(3, progress * 100)}%`;
+      ui.loadingPercent.textContent = `${Math.round(progress * 100)}%`;
+      ui.loadingCopy.textContent = ready < 3 ? "Shaping hills" : ready < 7 ? "Planting forests" : "Finishing details";
+      if (ready >= 9) {
+        state.worldReady = true;
+        state.mode = "paused";
+        ui.loadingBar.style.width = "100%";
+        ui.loadingPercent.textContent = "100%";
+        ui.loadingCopy.textContent = storedSave ? "Save restored" : "World ready";
+        ui.worldTitle.textContent = storedSave ? "Continue your world" : "A new world awaits";
+        ui.startButton.disabled = false;
+        ui.startButton.textContent = storedSave ? "Continue world" : "Enter world";
+        window.__BLOCKBOUND_BOOT__.ready = true;
+      }
+    }
+
+    function diagnostics() {
+      const coordinateSamples = [-65, -33, -17, -16, -15, -1, 0, 1, 15, 16, 17, 33, 65];
+      const coordinateRoundTrip = coordinateSamples.every((value) => {
+        const chunk = floorDiv(value, CONFIG.chunkSize);
+        const local = positiveMod(value, CONFIG.chunkSize);
+        return chunk * CONFIG.chunkSize + local === value;
+      });
+      const deterministic = heightAt(37, -41) === heightAt(37, -41);
+      return {
+        metadataComplete: missingBlockMetadata.length === 0,
+        coordinateRoundTrip,
+        deterministic,
+        loadedChunks: chunks.size,
+        worldReady: state.worldReady
+      };
+    }
+
+    window.gameDebug = {
+      get ready() { return state.worldReady; },
+      getState() {
+        return {
+          ready: state.worldReady,
+          mode: state.mode,
+          seed,
+          chunks: chunks.size,
+          queuedChunks: generationQueue.length,
+          drops: drops.length,
+          particles: particles.length,
+          position: { x: player.position.x, y: player.position.y, z: player.position.z },
+          velocity: { x: player.velocity.x, y: player.velocity.y, z: player.velocity.z },
+          grounded: player.grounded,
+          inWater: player.inWater,
+          health: player.health,
+          inventory: { ...state.inventory },
+          hotbar: [...state.hotbar],
+          selectedSlot: state.selectedSlot,
+          target: input.target ? { ...input.target } : null,
+          edits: edits.size,
+          diagnostics: diagnostics()
+        };
+      },
+      diagnostics,
+      getBlock: (x, y, z) => getBlock(x, y, z),
+      getSurface(x, z) {
+        x = Math.floor(x);
+        z = Math.floor(z);
+        for (let y = CONFIG.worldHeight - 1; y >= 0; y--) {
+          const id = getBlock(x, y, z);
+          if (isSolid(id)) return { x, y, z, id };
+        }
+        return null;
+      },
+      mineAt(x, y, z) {
+        const id = getBlock(x, y, z);
+        const before = state.inventory[BLOCK_INFO[id]?.drop ?? id] || 0;
+        const ok = breakBlock({ x: Math.floor(x), y: Math.floor(y), z: Math.floor(z), id });
+        return { ok, id, before, drops: drops.length };
+      },
+      collectAll() {
+        const collected = drops.length;
+        for (const drop of [...drops]) collectDrop(drop, true);
+        renderInventory();
+        return { collected, inventory: { ...state.inventory } };
+      },
+      placeAt(x, y, z, id = state.hotbar[state.selectedSlot]) {
+        x = Math.floor(x);
+        y = Math.floor(y);
+        z = Math.floor(z);
+        if (!PLACEABLE_BLOCKS.includes(id)) return { ok: false, reason: "not-placeable" };
+        if ((state.inventory[id] || 0) <= 0) return { ok: false, reason: "empty" };
+        if (!isReplaceable(getBlock(x, y, z))) return { ok: false, reason: "occupied" };
+        if (blockIntersectsPlayer(x, y, z)) return { ok: false, reason: "player-overlap" };
+        setBlock(x, y, z, id);
+        state.inventory[id]--;
+        state.stats.placed++;
+        renderInventory();
+        return { ok: true, id, remaining: state.inventory[id] };
+      },
+      grant(id, amount = 1) {
+        if (!PLACEABLE_BLOCKS.includes(id)) return false;
+        addInventory(id, amount);
+        return state.inventory[id];
+      },
+      teleport(x, y, z) {
+        player.position.set(Number(x), Number(y), Number(z));
+        player.velocity.set(0, 0, 0);
+        queueAround(player.position.x, player.position.z);
+        return { x: player.position.x, y: player.position.y, z: player.position.z };
+      },
+      streamTo(x, z) {
+        player.position.x = Number(x);
+        player.position.z = Number(z);
+        player.position.y = heightAt(Math.floor(x), Math.floor(z)) + 2;
+        player.velocity.set(0, 0, 0);
+        queueAround(player.position.x, player.position.z);
+        return { chunkX: floorDiv(x, CONFIG.chunkSize), chunkZ: floorDiv(z, CONFIG.chunkSize) };
+      },
+      setBlock: (x, y, z, id) => setBlock(x, y, z, id),
+      save: () => saveGame(true),
+      start: () => setPlaying(),
+      pause: () => pauseGame(),
+      blockIds: { ...BLOCK }
+    };
+
+    renderHotbar();
+    renderVitals();
+
+    const clock = new THREE.Clock();
+    let previousFrame = performance.now();
+
+    function animate(now) {
+      requestAnimationFrame(animate);
+      const rawDt = Math.min(0.1, (now - previousFrame) / 1000 || 0.016);
+      previousFrame = now;
+      const dt = Math.min(rawDt, 0.035);
+
+      processWorldQueues();
+      updateLoading();
+      updatePlayer(dt);
+      updateTarget();
+      updateMining(dt);
+      updateDrops(dt);
+      updateDayNight(dt);
+      updateClouds(dt);
+      updateStatus(dt);
+
+      if (!state.hasEntered) {
+        camera.position.set(player.position.x, player.position.y + CONFIG.eyeHeight, player.position.z);
+        camera.rotation.x = player.pitch;
+        camera.rotation.y = player.yaw + Math.sin(now * 0.00008) * 0.12;
+      }
+
+      if ((state.savePending && now - state.lastSave > 1800) || now - state.lastSave > 12000) {
+        saveGame(false);
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    addEventListener("resize", () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 1.8));
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>
