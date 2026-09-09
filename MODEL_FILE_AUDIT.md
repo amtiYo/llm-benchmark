@@ -17,18 +17,12 @@
 | Строк в таблице | 223 |
 | HTML-файлов на диске | 223 |
 | Корректные непустые результаты | 182 |
-| Корректные плейсхолдеры (0 байт) | 40 |
+| Корректные плейсхолдеры (0 байт) | 41 |
 | Контент без времени | 0 |
-| Время без контента | 1 |
+| Время без контента | 0 |
 | Строк без файла | 0 |
 | Файлов без строки | 0 |
-| **Нарушений правила** | **1** |
-
-## Нарушение: время есть, файл пустой
-
-| Строка | Вендор | Модель | Time A | Файл |
-|---:|---|---|---|---|
-| 123 | Nvidia | Nemotron 3.5 Lightning | 2,10 | `nvidia/nemotron-3-5-lightning.html` |
+| **Нарушений правила** | **0** |
 
 ## Нормализация имён
 
@@ -166,7 +160,7 @@
 | 120 | Nvidia | Nemotron 3 Nano | 0,52 | `nvidia/nemotron-3-nano.html` | 23136 | READY |
 | 121 | Nvidia | Nemotron 3 Super | 2,32 | `nvidia/nemotron-3-super.html` | 23911 | READY |
 | 122 | Nvidia | Nemotron 3 Ultra | пусто | `nvidia/nemotron-3-ultra.html` | 0 | PLACEHOLDER |
-| 123 | Nvidia | Nemotron 3.5 Lightning | 2,10 | `nvidia/nemotron-3-5-lightning.html` | 0 | НАРУШЕНИЕ: время без контента |
+| 123 | Nvidia | Nemotron 3.5 Lightning | пусто | `nvidia/nemotron-3-5-lightning.html` | 0 | PLACEHOLDER |
 | 124 | OpenAI | GPT OSS 20b | пусто | `openai/gpt-oss/gpt-oss-20b.html` | 0 | PLACEHOLDER |
 | 125 | OpenAI | GPT OSS 120b | 1,12 | `openai/gpt-oss/gpt-oss-120b.html` | 10698 | READY |
 | 126 | OpenAI | GPT 4o | 0,23 | `openai/gpt/gpt-4o.html` | 8497 | READY |
