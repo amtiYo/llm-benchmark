@@ -17,12 +17,12 @@
 | Строк в таблице | 223 |
 | HTML-файлов на диске | 227 |
 | Корректные непустые результаты | 182 |
-| Корректные плейсхолдеры (0 байт) | 36 |
-| Контент без времени | 4 |
+| Корректные плейсхолдеры (0 байт) | 37 |
+| Контент без времени | 3 |
 | Время без контента | 1 |
 | Строк без файла | 0 |
 | Файлов без строки | 4 |
-| **Нарушений правила** | **9** |
+| **Нарушений правила** | **8** |
 
 ## Нарушение: контент есть, время пусто
 
@@ -30,7 +30,6 @@
 |---:|---|---|---|---:|
 | 110 | MiniMax | MiniMax 3.0 | `minimax/minimax-3.html` | 125967 |
 | 111 | meta | Muse Spark 1.2 | `meta/muse-spark-1-2.html` | 58239 |
-| 183 | Sakana | Fugu Ultra | `sakana/fugu-ultra.html` | 1 |
 | 209 | Hunyuan | Hy4 | `hunyuan/hy4.html` | 191686 |
 
 ## Нарушение: время есть, файл пустой
@@ -242,7 +241,7 @@
 | 180 | OpenAI | GPT 6 Astra Pro | 30,52 | `openai/gpt/gpt-6-astra-pro.html` | 131116 | READY |
 | 181 | Poolside | Laguna XS 2.1 | 2,25 | `poolside/laguna-xs-2-1.html` | 29318 | READY |
 | 182 | Poolside | Laguna S 2.1 | пусто | `poolside/laguna-s-2-1.html` | 0 | PLACEHOLDER |
-| 183 | Sakana | Fugu Ultra | пусто | `sakana/fugu-ultra.html` | 1 | НАРУШЕНИЕ: контент без времени |
+| 183 | Sakana | Fugu Ultra | пусто | `sakana/fugu-ultra.html` | 0 | PLACEHOLDER |
 | 184 | StepFun | Step 3.5 Flash | 5,08 | `stepfun/step-3-5-flash.html` | 47212 | READY |
 | 185 | StepFun | Step 3.7 Flash | 3,16 | `stepfun/step-3-7-flash.html` | 54292 | READY |
 | 186 | Windsurf | SWE-1.5 Fast | 0,14 | `windsurf/swe-1-5-fast.html` | 35408 | READY |
